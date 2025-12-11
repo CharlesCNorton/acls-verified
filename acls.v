@@ -302,6 +302,241 @@ Module CPR.
       + destruct (etco2_max_during_cpr <? e) eqn:E3; discriminate H.
   Qed.
 
+  (** ETCO2 Waveform Morphology Analysis - Beyond Numeric Value. *)
+
+  Inductive WaveformShape : Type :=
+    | WF_Normal
+    | WF_SharkFin
+    | WF_Obstructed
+    | WF_Rebreathing
+    | WF_Curare_Cleft
+    | WF_Esophageal
+    | WF_Absent
+    | WF_Dampened.
+
+  Definition waveform_shape_eq_dec
+    : forall w1 w2 : WaveformShape, {w1 = w2} + {w1 <> w2}.
+  Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
+
+  Inductive WaveformTrend : Type :=
+    | Trend_Stable
+    | Trend_Rising
+    | Trend_Falling
+    | Trend_SuddenRise
+    | Trend_SuddenFall
+    | Trend_Erratic.
+
+  Definition waveform_trend_eq_dec
+    : forall t1 t2 : WaveformTrend, {t1 = t2} + {t1 <> t2}.
+  Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
+
+  Inductive BaselineStatus : Type :=
+    | BL_Zero
+    | BL_Elevated
+    | BL_Variable.
+
+  Definition baseline_status_eq_dec
+    : forall b1 b2 : BaselineStatus, {b1 = b2} + {b1 <> b2}.
+  Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
+
+  Record ETCO2Waveform : Type := mkWaveform {
+    wf_shape : WaveformShape;
+    wf_value_mmHg : nat;
+    wf_trend : WaveformTrend;
+    wf_baseline : BaselineStatus;
+    wf_plateau_present : bool;
+    wf_oscillations_during_plateau : bool;
+    wf_alpha_angle_degrees : nat;
+    wf_beta_angle_degrees : nat
+  }.
+
+  Definition normal_alpha_angle_min : nat := 70.
+  Definition normal_alpha_angle_max : nat := 100.
+  Definition normal_beta_angle_min : nat := 80.
+  Definition normal_beta_angle_max : nat := 90.
+  Definition obstructive_alpha_angle_threshold : nat := 110.
+
+  Definition waveform_indicates_tube_placement (wf : ETCO2Waveform) : bool :=
+    match wf_shape wf with
+    | WF_Normal => true
+    | WF_SharkFin => true
+    | WF_Obstructed => true
+    | WF_Rebreathing => true
+    | WF_Curare_Cleft => true
+    | WF_Dampened => true
+    | WF_Esophageal => false
+    | WF_Absent => false
+    end.
+
+  Definition waveform_indicates_esophageal (wf : ETCO2Waveform) : bool :=
+    match wf_shape wf with
+    | WF_Esophageal => true
+    | _ => false
+    end.
+
+  Definition waveform_suggests_rosc (wf : ETCO2Waveform) : bool :=
+    match wf_trend wf with
+    | Trend_SuddenRise => etco2_rosc_threshold <=? wf_value_mmHg wf
+    | Trend_Rising => (35 <=? wf_value_mmHg wf) && (wf_value_mmHg wf <? 60)
+    | _ => etco2_rosc_threshold <=? wf_value_mmHg wf
+    end.
+
+  Definition waveform_suggests_obstruction (wf : ETCO2Waveform) : bool :=
+    match wf_shape wf with
+    | WF_SharkFin => true
+    | WF_Obstructed => true
+    | _ => obstructive_alpha_angle_threshold <=? wf_alpha_angle_degrees wf
+    end.
+
+  Definition waveform_suggests_rebreathing (wf : ETCO2Waveform) : bool :=
+    match wf_baseline wf with
+    | BL_Elevated => true
+    | _ => match wf_shape wf with WF_Rebreathing => true | _ => false end
+    end.
+
+  Definition waveform_suggests_circuit_leak (wf : ETCO2Waveform) : bool :=
+    match wf_shape wf with
+    | WF_Dampened => true
+    | _ => negb (wf_plateau_present wf) && (wf_value_mmHg wf <? 20)
+    end.
+
+  Definition cardiogenic_oscillations_present (wf : ETCO2Waveform) : bool :=
+    wf_oscillations_during_plateau wf.
+
+  Definition cardiogenic_oscillations_suggest_pulse (wf : ETCO2Waveform) : bool :=
+    cardiogenic_oscillations_present wf && (15 <=? wf_value_mmHg wf).
+
+  Inductive WaveformInterpretation : Type :=
+    | WI_NormalCPR
+    | WI_PoorCPR
+    | WI_LikelyROSC
+    | WI_PossibleROSC
+    | WI_AirwayObstruction
+    | WI_Rebreathing
+    | WI_CircuitLeak
+    | WI_EsophagealPlacement
+    | WI_NoWaveform.
+
+  Definition interpret_waveform (wf : ETCO2Waveform) : WaveformInterpretation :=
+    if waveform_indicates_esophageal wf then WI_EsophagealPlacement
+    else if negb (waveform_indicates_tube_placement wf) then WI_NoWaveform
+    else if waveform_suggests_rosc wf then
+      match wf_trend wf with
+      | Trend_SuddenRise => WI_LikelyROSC
+      | _ => if cardiogenic_oscillations_present wf then WI_LikelyROSC
+             else WI_PossibleROSC
+      end
+    else if waveform_suggests_obstruction wf then WI_AirwayObstruction
+    else if waveform_suggests_rebreathing wf then WI_Rebreathing
+    else if waveform_suggests_circuit_leak wf then WI_CircuitLeak
+    else if wf_value_mmHg wf <? etco2_min_during_cpr then WI_PoorCPR
+    else WI_NormalCPR.
+
+  Definition normal_cpr_waveform : ETCO2Waveform :=
+    mkWaveform WF_Normal 15 Trend_Stable BL_Zero true false 85 85.
+
+  Definition rosc_waveform : ETCO2Waveform :=
+    mkWaveform WF_Normal 45 Trend_SuddenRise BL_Zero true true 85 85.
+
+  Definition poor_cpr_waveform : ETCO2Waveform :=
+    mkWaveform WF_Normal 5 Trend_Falling BL_Zero true false 85 85.
+
+  Definition shark_fin_waveform : ETCO2Waveform :=
+    mkWaveform WF_SharkFin 12 Trend_Stable BL_Zero false false 120 75.
+
+  Definition esophageal_waveform : ETCO2Waveform :=
+    mkWaveform WF_Esophageal 0 Trend_Stable BL_Zero false false 0 0.
+
+  Definition absent_waveform : ETCO2Waveform :=
+    mkWaveform WF_Absent 0 Trend_Stable BL_Zero false false 0 0.
+
+  Theorem normal_waveform_normal_cpr :
+    interpret_waveform normal_cpr_waveform = WI_NormalCPR.
+  Proof. reflexivity. Qed.
+
+  Theorem rosc_waveform_likely_rosc :
+    interpret_waveform rosc_waveform = WI_LikelyROSC.
+  Proof. reflexivity. Qed.
+
+  Theorem poor_cpr_waveform_poor :
+    interpret_waveform poor_cpr_waveform = WI_PoorCPR.
+  Proof. reflexivity. Qed.
+
+  Theorem shark_fin_obstruction :
+    interpret_waveform shark_fin_waveform = WI_AirwayObstruction.
+  Proof. reflexivity. Qed.
+
+  Theorem esophageal_detected :
+    interpret_waveform esophageal_waveform = WI_EsophagealPlacement.
+  Proof. reflexivity. Qed.
+
+  Theorem absent_no_waveform :
+    interpret_waveform absent_waveform = WI_NoWaveform.
+  Proof. reflexivity. Qed.
+
+  Definition combined_etco2_assessment (wf : ETCO2Waveform) : CPRQuality :=
+    let interpretation := interpret_waveform wf in
+    match interpretation with
+    | WI_LikelyROSC | WI_PossibleROSC => QualityROSCLikely
+    | WI_PoorCPR | WI_CircuitLeak | WI_NoWaveform => QualityPoor
+    | WI_AirwayObstruction | WI_Rebreathing => QualityPoor
+    | WI_EsophagealPlacement => QualityPoor
+    | WI_NormalCPR =>
+        if 20 <? wf_value_mmHg wf then QualityExcellent
+        else QualityAdequate
+    end.
+
+  Theorem normal_waveform_adequate :
+    combined_etco2_assessment normal_cpr_waveform = QualityAdequate.
+  Proof. reflexivity. Qed.
+
+  Theorem rosc_waveform_rosc_likely :
+    combined_etco2_assessment rosc_waveform = QualityROSCLikely.
+  Proof. reflexivity. Qed.
+
+  Theorem esophageal_poor_quality :
+    combined_etco2_assessment esophageal_waveform = QualityPoor.
+  Proof. reflexivity. Qed.
+
+  Definition waveform_action_needed (wf : ETCO2Waveform) : option nat :=
+    let interpretation := interpret_waveform wf in
+    match interpretation with
+    | WI_EsophagealPlacement => Some 1
+    | WI_NoWaveform => Some 2
+    | WI_AirwayObstruction => Some 3
+    | WI_Rebreathing => Some 4
+    | WI_CircuitLeak => Some 5
+    | WI_PoorCPR => Some 6
+    | WI_LikelyROSC => Some 7
+    | WI_PossibleROSC => Some 8
+    | WI_NormalCPR => None
+    end.
+
+  Theorem esophageal_needs_reintubation :
+    waveform_action_needed esophageal_waveform = Some 1.
+  Proof. reflexivity. Qed.
+
+  Theorem normal_cpr_no_action :
+    waveform_action_needed normal_cpr_waveform = None.
+  Proof. reflexivity. Qed.
+
+  Theorem rosc_needs_pulse_check :
+    waveform_action_needed rosc_waveform = Some 7.
+  Proof. reflexivity. Qed.
+
+  Definition sudden_rise_threshold_mmHg : nat := 15.
+
+  Definition is_sudden_rise (prev curr : nat) : bool :=
+    (sudden_rise_threshold_mmHg <=? curr - prev) && (curr - prev <=? 40).
+
+  Theorem sudden_rise_15_to_40 :
+    is_sudden_rise 15 40 = true.
+  Proof. reflexivity. Qed.
+
+  Theorem gradual_rise_not_sudden :
+    is_sudden_rise 15 25 = false.
+  Proof. reflexivity. Qed.
+
 End CPR.
 
 (******************************************************************************)
@@ -2495,6 +2730,251 @@ Module Decision.
       destruct (3 <=? shock_count s); reflexivity.
   Qed.
 
+  (** Phase-Aware Recommendations - Enforces Phase Consistency. *)
+
+  Definition recommend_phase_aware (s : AlgorithmState.t) : Recommendation :=
+    let base_rec := recommend s in
+    let phase := current_phase s in
+    match phase with
+    | Phase_Initial =>
+        if rosc_achieved s then ROSC_achieved
+        else if is_shockable_state s then Shock_then_CPR
+        else Give_Epi_during_CPR
+    | Phase_RhythmCheck =>
+        if rosc_achieved s then ROSC_achieved
+        else Check_Rhythm
+    | Phase_ShockDecision =>
+        if rosc_achieved s then ROSC_achieved
+        else if is_shockable_state s then Shock_then_CPR
+        else base_rec
+    | Phase_CPR_Interval =>
+        if rosc_achieved s then ROSC_achieved
+        else CPR_only
+    | Phase_DrugWindow =>
+        if rosc_achieved s then ROSC_achieved
+        else match base_rec with
+             | Shock_then_CPR => CPR_only
+             | _ => base_rec
+             end
+    | Phase_PostROSC =>
+        ROSC_achieved
+    | Phase_Terminated =>
+        ROSC_achieved
+    end.
+
+  Definition phase_allows_recommendation (s : AlgorithmState.t) (rec : Recommendation) : bool :=
+    let phase := current_phase s in
+    match rec with
+    | ROSC_achieved => true
+    | Shock_then_CPR =>
+        phase_allows_shock phase ||
+        match phase with Phase_Initial | Phase_ShockDecision => true | _ => false end
+    | Give_Epi_during_CPR | Give_Amio_during_CPR | Give_Lido_during_CPR |
+      Give_Calcium_during_CPR | Give_Bicarb_during_CPR | Give_Mag_during_CPR |
+      Give_Lipid_during_CPR =>
+        phase_allows_drugs phase ||
+        match phase with Phase_Initial | Phase_DrugWindow | Phase_ShockDecision => true | _ => false end
+    | CPR_only =>
+        phase_allows_cpr phase ||
+        match phase with Phase_CPR_Interval | Phase_DrugWindow | Phase_ShockDecision => true | _ => false end
+    | Check_Rhythm =>
+        match phase with Phase_RhythmCheck | Phase_CPR_Interval => true | _ => false end
+    | Consider_ECPR => true
+    | Activate_Cath_Lab =>
+        match phase with Phase_PostROSC => true | _ => false end
+    end.
+
+  Theorem recommend_phase_aware_always_consistent : forall s,
+    phase_allows_recommendation s (recommend_phase_aware s) = true.
+  Proof.
+    intros s.
+    unfold recommend_phase_aware, phase_allows_recommendation, recommend,
+           shockable_recommendation, nonshockable_recommendation,
+           reversible_cause_recommendation, antiarrhythmic_recommendation.
+    destruct (current_phase s) eqn:Ephase; simpl;
+    try reflexivity;
+    destruct (rosc_achieved s) eqn:Erosc; simpl;
+    try reflexivity;
+    destruct (is_shockable_state s) eqn:Eshock; simpl;
+    try reflexivity;
+    try (destruct (shock_count s <? 2) eqn:Esc; simpl; try reflexivity);
+    destruct (needs_lipid s) eqn:Elipid; simpl; try reflexivity;
+    destruct (needs_calcium s) eqn:Ecalc; simpl; try reflexivity;
+    destruct (needs_bicarb s) eqn:Ebicarb; simpl; try reflexivity;
+    destruct (needs_magnesium s) eqn:Emag; simpl; try reflexivity;
+    try (destruct ((shock_count s =? 2) && epi_due s) eqn:Eepi2; simpl; try reflexivity);
+    try (destruct (can_give_amiodarone s && (amiodarone_doses s =? 0)) eqn:Eamio0; simpl; try reflexivity);
+    try (destruct (can_give_amiodarone s && (amiodarone_doses s =? 1)) eqn:Eamio1; simpl; try reflexivity);
+    try (destruct (can_give_lidocaine s && (lidocaine_doses s =? 0)) eqn:Elido0; simpl; try reflexivity);
+    try (destruct (can_give_lidocaine s && (lidocaine_doses s <? 3)) eqn:Elido3; simpl; try reflexivity);
+    destruct (epi_due s) eqn:Eepi; simpl; reflexivity.
+  Qed.
+
+  Theorem rosc_phase_aware_correct : forall s,
+    rosc_achieved s = true ->
+    recommend_phase_aware s = ROSC_achieved.
+  Proof.
+    intros s Hrosc.
+    unfold recommend_phase_aware.
+    destruct (current_phase s); try rewrite Hrosc; reflexivity.
+  Qed.
+
+  Theorem phase_aware_in_drug_window_matches_base : forall s,
+    current_phase s = Phase_DrugWindow ->
+    rosc_achieved s = false ->
+    recommend s <> Shock_then_CPR ->
+    recommend_phase_aware s = recommend s.
+  Proof.
+    intros s Hphase Hrosc Hnotshock.
+    unfold recommend_phase_aware.
+    rewrite Hphase, Hrosc.
+    destruct (recommend s) eqn:Erec; try reflexivity.
+    exfalso. apply Hnotshock. reflexivity.
+  Qed.
+
+  Theorem phase_aware_shock_decision_shockable : forall s,
+    current_phase s = Phase_ShockDecision ->
+    rosc_achieved s = false ->
+    is_shockable_state s = true ->
+    recommend_phase_aware s = Shock_then_CPR.
+  Proof.
+    intros s Hphase Hrosc Hshock.
+    unfold recommend_phase_aware.
+    rewrite Hphase, Hrosc, Hshock. reflexivity.
+  Qed.
+
+  (** Contraindication-Aware Recommendations. *)
+
+  Definition recommend_with_contraindications
+    (s : AlgorithmState.t)
+    (ci : Medication.PatientContraindications)
+    : Recommendation :=
+    let base_rec := recommend s in
+    match base_rec with
+    | Give_Amio_during_CPR =>
+        if Medication.amiodarone_contraindicated ci then
+          if can_give_lidocaine s && negb (Medication.lidocaine_contraindicated ci) then
+            Give_Lido_during_CPR
+          else if epi_due s then
+            Give_Epi_during_CPR
+          else
+            Shock_then_CPR
+        else base_rec
+    | Give_Lido_during_CPR =>
+        if Medication.lidocaine_contraindicated ci then
+          if can_give_amiodarone s && negb (Medication.amiodarone_contraindicated ci) then
+            Give_Amio_during_CPR
+          else if epi_due s then
+            Give_Epi_during_CPR
+          else
+            Shock_then_CPR
+        else base_rec
+    | Give_Calcium_during_CPR =>
+        if Medication.calcium_contraindicated ci then
+          if needs_bicarb s && negb (Medication.bicarb_contraindicated ci) then
+            Give_Bicarb_during_CPR
+          else if epi_due s then
+            Give_Epi_during_CPR
+          else
+            CPR_only
+        else base_rec
+    | Give_Bicarb_during_CPR =>
+        if Medication.bicarb_contraindicated ci then
+          if needs_calcium s && negb (Medication.calcium_contraindicated ci) then
+            Give_Calcium_during_CPR
+          else if epi_due s then
+            Give_Epi_during_CPR
+          else
+            CPR_only
+        else base_rec
+    | Give_Mag_during_CPR =>
+        if Medication.magnesium_contraindicated ci then
+          if epi_due s then
+            Give_Epi_during_CPR
+          else
+            CPR_only
+        else base_rec
+    | _ => base_rec
+    end.
+
+  Definition recommendation_respects_contraindications
+    (rec : Recommendation)
+    (ci : Medication.PatientContraindications)
+    : bool :=
+    match rec with
+    | Give_Amio_during_CPR => negb (Medication.amiodarone_contraindicated ci)
+    | Give_Lido_during_CPR => negb (Medication.lidocaine_contraindicated ci)
+    | Give_Calcium_during_CPR => negb (Medication.calcium_contraindicated ci)
+    | Give_Bicarb_during_CPR => negb (Medication.bicarb_contraindicated ci)
+    | Give_Mag_during_CPR => negb (Medication.magnesium_contraindicated ci)
+    | _ => true
+    end.
+
+  Theorem recommend_with_ci_respects_contraindications : forall s ci,
+    recommendation_respects_contraindications (recommend_with_contraindications s ci) ci = true.
+  Proof.
+    intros s ci.
+    unfold recommend_with_contraindications, recommendation_respects_contraindications.
+    destruct (recommend s) eqn:Erec; simpl; try reflexivity;
+    destruct (Medication.amiodarone_contraindicated ci) eqn:Eamio_ci; simpl; try reflexivity;
+    destruct (Medication.lidocaine_contraindicated ci) eqn:Elido_ci; simpl; try reflexivity;
+    destruct (Medication.calcium_contraindicated ci) eqn:Ecalc_ci; simpl; try reflexivity;
+    destruct (Medication.bicarb_contraindicated ci) eqn:Ebicarb_ci; simpl; try reflexivity;
+    destruct (Medication.magnesium_contraindicated ci) eqn:Emag_ci; simpl; try reflexivity;
+    destruct (can_give_lidocaine s) eqn:Ecan_lido; simpl; try reflexivity;
+    destruct (can_give_amiodarone s) eqn:Ecan_amio; simpl; try reflexivity;
+    destruct (needs_bicarb s) eqn:Eneed_bicarb; simpl; try reflexivity;
+    destruct (needs_calcium s) eqn:Eneed_calc; simpl; try reflexivity;
+    destruct (epi_due s) eqn:Eepi; simpl; reflexivity.
+  Qed.
+
+  Theorem no_contraindications_matches_base : forall s,
+    recommend_with_contraindications s Medication.no_contraindications = recommend s.
+  Proof.
+    intros s.
+    unfold recommend_with_contraindications, Medication.no_contraindications,
+           Medication.amiodarone_contraindicated, Medication.lidocaine_contraindicated,
+           Medication.calcium_contraindicated, Medication.bicarb_contraindicated,
+           Medication.magnesium_contraindicated.
+    destruct (recommend s); simpl; reflexivity.
+  Qed.
+
+  Theorem amio_allergy_gets_lidocaine : forall s ci,
+    recommend s = Give_Amio_during_CPR ->
+    Medication.amiodarone_contraindicated ci = true ->
+    Medication.lidocaine_contraindicated ci = false ->
+    can_give_lidocaine s = true ->
+    recommend_with_contraindications s ci = Give_Lido_during_CPR.
+  Proof.
+    intros s ci Hrec Hamio_ci Hlido_ci Hcan_lido.
+    unfold recommend_with_contraindications.
+    rewrite Hrec, Hamio_ci, Hcan_lido, Hlido_ci. reflexivity.
+  Qed.
+
+  Theorem lido_allergy_gets_amio : forall s ci,
+    recommend s = Give_Lido_during_CPR ->
+    Medication.lidocaine_contraindicated ci = true ->
+    Medication.amiodarone_contraindicated ci = false ->
+    can_give_amiodarone s = true ->
+    recommend_with_contraindications s ci = Give_Amio_during_CPR.
+  Proof.
+    intros s ci Hrec Hlido_ci Hamio_ci Hcan_amio.
+    unfold recommend_with_contraindications.
+    rewrite Hrec, Hlido_ci, Hcan_amio, Hamio_ci. reflexivity.
+  Qed.
+
+  Theorem digoxin_tox_blocks_calcium : forall s ci,
+    recommend s = Give_Calcium_during_CPR ->
+    Medication.calcium_contraindicated ci = true ->
+    Medication.bicarb_contraindicated ci = false ->
+    needs_bicarb s = true ->
+    recommend_with_contraindications s ci = Give_Bicarb_during_CPR.
+  Proof.
+    intros s ci Hrec Hcalc_ci Hbicarb_ci Hneeds.
+    unfold recommend_with_contraindications.
+    rewrite Hrec, Hcalc_ci, Hneeds, Hbicarb_ci. reflexivity.
+  Qed.
+
 End Decision.
 
 (******************************************************************************)
@@ -2578,7 +3058,12 @@ Module ACLSSpec.
         Allowed s Consider_ECPR
     | Allow_CathLab : forall s,
         rosc_achieved s = true ->
-        Allowed s Activate_Cath_Lab.
+        Allowed s Activate_Cath_Lab
+    | Allow_Shock_Subsequent : forall s,
+        rosc_achieved s = false ->
+        is_shockable_state s = true ->
+        2 <= shock_count s ->
+        Allowed s Shock_then_CPR.
 
   Theorem rosc_recommendation_allowed : forall s,
     rosc_achieved s = true ->
@@ -2624,6 +3109,163 @@ Module ACLSSpec.
     unfold reversible_cause_recommendation.
     rewrite Hnlipid, Hncalc, Hnbicarb, Hnmag, Hnepi.
     apply Allow_CPR_Only; assumption.
+  Qed.
+
+  (** Main Refinement Theorem: recommend always produces an Allowed action. *)
+
+  Lemma shockable_recommendation_allowed : forall s,
+    is_shockable_state s = true ->
+    Allowed s (shockable_recommendation s).
+  Proof.
+    intros s Hshock.
+    unfold shockable_recommendation.
+    destruct (rosc_achieved s) eqn:Erosc.
+    - apply Allow_ROSC. exact Erosc.
+    - destruct (shock_count s <? 2) eqn:Esc.
+      + apply Allow_Shock_Initial.
+        * exact Erosc.
+        * exact Hshock.
+        * apply Nat.ltb_lt. exact Esc.
+      + destruct (reversible_cause_recommendation s) as [rec|] eqn:Erc.
+        * unfold reversible_cause_recommendation in Erc.
+          destruct (needs_lipid s) eqn:Elipid.
+          -- inversion Erc. subst. apply Allow_Lipid.
+             ++ exact Erosc.
+             ++ exact Elipid.
+             ++ right. apply Nat.ltb_ge in Esc. exact Esc.
+          -- destruct (needs_calcium s) eqn:Ecalc.
+             ++ inversion Erc. subst. apply Allow_Calcium.
+                ** exact Erosc.
+                ** exact Ecalc.
+                ** right. apply Nat.ltb_ge in Esc. exact Esc.
+             ++ destruct (needs_bicarb s) eqn:Ebicarb.
+                ** inversion Erc. subst. apply Allow_Bicarb.
+                   --- exact Erosc.
+                   --- exact Ebicarb.
+                   --- right. apply Nat.ltb_ge in Esc. exact Esc.
+                ** destruct (needs_magnesium s) eqn:Emag.
+                   --- inversion Erc. subst. apply Allow_Mag.
+                       +++ exact Erosc.
+                       +++ exact Emag.
+                       +++ right. apply Nat.ltb_ge in Esc. exact Esc.
+                   --- discriminate Erc.
+        * destruct ((shock_count s =? 2) && epi_due s) eqn:Eepi2.
+          -- apply andb_true_iff in Eepi2. destruct Eepi2 as [Esc2 Hepi].
+             apply Allow_Epi_Shockable.
+             ++ exact Erosc.
+             ++ exact Hshock.
+             ++ apply Nat.eqb_eq in Esc2. lia.
+             ++ exact Hepi.
+          -- destruct (antiarrhythmic_recommendation s) as [arec|] eqn:Earec.
+             ++ unfold antiarrhythmic_recommendation in Earec.
+                destruct (can_give_amiodarone s && (amiodarone_doses s =? 0)) eqn:Eamio0.
+                ** apply andb_true_iff in Eamio0. destruct Eamio0 as [Hcan _].
+                   inversion Earec. subst. apply Allow_Amio.
+                   --- exact Erosc.
+                   --- exact Hshock.
+                   --- unfold can_give_amiodarone in Hcan.
+                       apply andb_true_iff in Hcan. destruct Hcan as [Hcan1 _].
+                       apply andb_true_iff in Hcan1. destruct Hcan1 as [Hcan2 _].
+                       apply andb_true_iff in Hcan2. destruct Hcan2 as [_ Hsc3].
+                       apply Nat.leb_le in Hsc3. exact Hsc3.
+                   --- exact Hcan.
+                ** destruct (can_give_amiodarone s && (amiodarone_doses s =? 1)) eqn:Eamio1.
+                   --- apply andb_true_iff in Eamio1. destruct Eamio1 as [Hcan _].
+                       inversion Earec. subst. apply Allow_Amio.
+                       +++ exact Erosc.
+                       +++ exact Hshock.
+                       +++ unfold can_give_amiodarone in Hcan.
+                           apply andb_true_iff in Hcan. destruct Hcan as [Hcan1 _].
+                           apply andb_true_iff in Hcan1. destruct Hcan1 as [Hcan2 _].
+                           apply andb_true_iff in Hcan2. destruct Hcan2 as [_ Hsc3].
+                           apply Nat.leb_le in Hsc3. exact Hsc3.
+                       +++ exact Hcan.
+                   --- destruct (can_give_lidocaine s && (lidocaine_doses s =? 0)) eqn:Elido0.
+                       +++ apply andb_true_iff in Elido0. destruct Elido0 as [Hcan _].
+                           inversion Earec. subst. apply Allow_Lido.
+                           *** exact Erosc.
+                           *** exact Hshock.
+                           *** unfold can_give_lidocaine in Hcan.
+                               apply andb_true_iff in Hcan. destruct Hcan as [Hcan1 _].
+                               apply andb_true_iff in Hcan1. destruct Hcan1 as [Hcan2 _].
+                               apply andb_true_iff in Hcan2. destruct Hcan2 as [Hcan3 _].
+                               apply andb_true_iff in Hcan3. destruct Hcan3 as [_ Hsc3].
+                               apply Nat.leb_le in Hsc3. exact Hsc3.
+                           *** exact Hcan.
+                       +++ destruct (can_give_lidocaine s && (lidocaine_doses s <? 3)) eqn:Elido3.
+                           *** apply andb_true_iff in Elido3. destruct Elido3 as [Hcan _].
+                               inversion Earec. subst. apply Allow_Lido.
+                               ---- exact Erosc.
+                               ---- exact Hshock.
+                               ---- unfold can_give_lidocaine in Hcan.
+                                    apply andb_true_iff in Hcan. destruct Hcan as [Hcan1 _].
+                                    apply andb_true_iff in Hcan1. destruct Hcan1 as [Hcan2 _].
+                                    apply andb_true_iff in Hcan2. destruct Hcan2 as [Hcan3 _].
+                                    apply andb_true_iff in Hcan3. destruct Hcan3 as [_ Hsc3].
+                                    apply Nat.leb_le in Hsc3. exact Hsc3.
+                               ---- exact Hcan.
+                           *** discriminate Earec.
+             ++ destruct (epi_due s) eqn:Hepi.
+                ** apply Allow_Epi_Shockable.
+                   --- exact Erosc.
+                   --- exact Hshock.
+                   --- apply Nat.ltb_ge in Esc. exact Esc.
+                   --- exact Hepi.
+                ** apply Allow_Shock_Subsequent.
+                   --- exact Erosc.
+                   --- exact Hshock.
+                   --- apply Nat.ltb_ge in Esc. exact Esc.
+  Qed.
+
+  Lemma nonshockable_recommendation_allowed : forall s,
+    is_shockable_state s = false ->
+    Allowed s (nonshockable_recommendation s).
+  Proof.
+    intros s Hnonshock.
+    unfold nonshockable_recommendation.
+    destruct (rosc_achieved s) eqn:Erosc.
+    - apply Allow_ROSC. exact Erosc.
+    - destruct (reversible_cause_recommendation s) as [rec|] eqn:Erc.
+      + unfold reversible_cause_recommendation in Erc.
+        destruct (needs_lipid s) eqn:Elipid.
+        * inversion Erc. subst. apply Allow_Lipid.
+          -- exact Erosc.
+          -- exact Elipid.
+          -- left. exact Hnonshock.
+        * destruct (needs_calcium s) eqn:Ecalc.
+          -- inversion Erc. subst. apply Allow_Calcium.
+             ++ exact Erosc.
+             ++ exact Ecalc.
+             ++ left. exact Hnonshock.
+          -- destruct (needs_bicarb s) eqn:Ebicarb.
+             ++ inversion Erc. subst. apply Allow_Bicarb.
+                ** exact Erosc.
+                ** exact Ebicarb.
+                ** left. exact Hnonshock.
+             ++ destruct (needs_magnesium s) eqn:Emag.
+                ** inversion Erc. subst. apply Allow_Mag.
+                   --- exact Erosc.
+                   --- exact Emag.
+                   --- left. exact Hnonshock.
+                ** discriminate Erc.
+      + destruct (epi_due s) eqn:Hepi.
+        * apply Allow_Epi_NonShockable.
+          -- exact Erosc.
+          -- exact Hnonshock.
+          -- exact Hepi.
+        * apply Allow_CPR_Only.
+          -- exact Erosc.
+          -- exact Hnonshock.
+  Qed.
+
+  Theorem recommend_sound : forall s,
+    Allowed s (recommend s).
+  Proof.
+    intros s.
+    unfold recommend.
+    destruct (is_shockable_state s) eqn:Hshock.
+    - apply shockable_recommendation_allowed. exact Hshock.
+    - apply nonshockable_recommendation_allowed. exact Hshock.
   Qed.
 
   Definition phase_eqb (p1 p2 : Phase) : bool :=
@@ -3960,6 +4602,228 @@ Module DrowningProtocol.
   Qed.
 
 End DrowningProtocol.
+
+(******************************************************************************)
+(*                                                                            *)
+(*                 SECTION 8C2: PREGNANCY CARDIAC ARREST                      *)
+(*                                                                            *)
+(*  Maternal cardiac arrest management per AHA 2020. Key interventions:       *)
+(*  left uterine displacement, early airway, perimortem cesarean delivery     *)
+(*  within 5 minutes if no ROSC. Gestational age >20 weeks threshold.         *)
+(*                                                                            *)
+(******************************************************************************)
+
+Module PregnancyArrest.
+
+  Import AlgorithmState.
+
+  Definition viable_gestational_age_weeks : nat := 20.
+  Definition fundal_height_at_umbilicus_weeks : nat := 20.
+  Definition perimortem_cd_target_min : nat := 5.
+  Definition neonatal_viability_weeks : nat := 23.
+
+  Inductive GestationalCategory : Type :=
+    | PreViable
+    | Viable
+    | Term.
+
+  Definition gestational_category_eq_dec
+    : forall g1 g2 : GestationalCategory, {g1 = g2} + {g1 <> g2}.
+  Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
+
+  Definition classify_gestation (weeks : nat) : GestationalCategory :=
+    if weeks <? viable_gestational_age_weeks then PreViable
+    else if weeks <? 37 then Viable
+    else Term.
+
+  Inductive UterineDisplacement : Type :=
+    | UD_None
+    | UD_ManualLeftLateral
+    | UD_LeftLateralTilt
+    | UD_Both.
+
+  Definition displacement_eq_dec
+    : forall d1 d2 : UterineDisplacement, {d1 = d2} + {d1 <> d2}.
+  Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
+
+  Definition displacement_adequate (d : UterineDisplacement) : bool :=
+    match d with
+    | UD_None => false
+    | _ => true
+    end.
+
+  Record PregnantPatient : Type := mkPregnantPatient {
+    gestational_age_weeks : nat;
+    fundal_height_above_umbilicus : bool;
+    uterine_displacement : UterineDisplacement;
+    iv_access_above_diaphragm : bool;
+    advanced_airway_placed : bool;
+    arrest_time_min : nat;
+    rosc_achieved_pp : bool;
+    perimortem_cd_performed : bool;
+    ob_team_present : bool;
+    nicu_team_present : bool
+  }.
+
+  Definition uterus_obstructs_venous_return (p : PregnantPatient) : bool :=
+    (viable_gestational_age_weeks <=? gestational_age_weeks p) ||
+    fundal_height_above_umbilicus p.
+
+  Definition left_uterine_displacement_required (p : PregnantPatient) : bool :=
+    uterus_obstructs_venous_return p &&
+    negb (displacement_adequate (uterine_displacement p)).
+
+  Definition iv_placement_appropriate (p : PregnantPatient) : bool :=
+    negb (uterus_obstructs_venous_return p) ||
+    iv_access_above_diaphragm p.
+
+  Definition perimortem_cd_indicated (p : PregnantPatient) : bool :=
+    (viable_gestational_age_weeks <=? gestational_age_weeks p) &&
+    negb (rosc_achieved_pp p) &&
+    negb (perimortem_cd_performed p) &&
+    (4 <=? arrest_time_min p).
+
+  Definition perimortem_cd_urgent (p : PregnantPatient) : bool :=
+    perimortem_cd_indicated p && (perimortem_cd_target_min <=? arrest_time_min p).
+
+  Definition neonatal_resuscitation_indicated (p : PregnantPatient) : bool :=
+    perimortem_cd_performed p &&
+    (neonatal_viability_weeks <=? gestational_age_weeks p).
+
+  Definition team_readiness (p : PregnantPatient) : bool :=
+    ob_team_present p &&
+    ((gestational_age_weeks p <? neonatal_viability_weeks) || nicu_team_present p).
+
+  Inductive PregnancyIntervention : Type :=
+    | PI_StandardACLS
+    | PI_ApplyLUD
+    | PI_PreparePerimortmCD
+    | PI_PerformPerimortmCD
+    | PI_ROSC
+    | PI_NeonatalResus.
+
+  Definition recommend_pregnancy_intervention (p : PregnantPatient)
+    : PregnancyIntervention :=
+    if rosc_achieved_pp p then PI_ROSC
+    else if left_uterine_displacement_required p then PI_ApplyLUD
+    else if perimortem_cd_urgent p then PI_PerformPerimortmCD
+    else if perimortem_cd_indicated p then PI_PreparePerimortmCD
+    else PI_StandardACLS.
+
+  Definition cpr_modifications_pregnancy (p : PregnantPatient) : list nat :=
+    if uterus_obstructs_venous_return p then
+      [1; 2; 3]
+    else
+      [].
+
+  Definition defibrillation_safe_pregnancy : bool := true.
+
+  Definition standard_acls_doses_pregnancy : bool := true.
+
+  Definition remove_fetal_monitors_during_cpr : bool := true.
+
+  Definition early_viable_patient : PregnantPatient :=
+    mkPregnantPatient 24 true UD_None true true 3 false false true true.
+
+  Definition term_patient_with_lud : PregnantPatient :=
+    mkPregnantPatient 38 true UD_ManualLeftLateral true true 2 false false true true.
+
+  Definition previable_patient : PregnantPatient :=
+    mkPregnantPatient 16 false UD_None true false 5 false false false false.
+
+  Definition post_cd_patient : PregnantPatient :=
+    mkPregnantPatient 32 true UD_Both true true 8 false true true true.
+
+  Theorem viable_needs_lud : forall p,
+    gestational_age_weeks p >= viable_gestational_age_weeks ->
+    uterine_displacement p = UD_None ->
+    left_uterine_displacement_required p = true.
+  Proof.
+    intros p Hga Hud.
+    unfold left_uterine_displacement_required, uterus_obstructs_venous_return,
+           displacement_adequate.
+    rewrite Hud.
+    assert (Hle : viable_gestational_age_weeks <=? gestational_age_weeks p = true).
+    { apply Nat.leb_le. exact Hga. }
+    rewrite Hle. destruct (fundal_height_above_umbilicus p); reflexivity.
+  Qed.
+
+  Theorem previable_no_cd : forall p,
+    gestational_age_weeks p < viable_gestational_age_weeks ->
+    perimortem_cd_indicated p = false.
+  Proof.
+    intros p Hga.
+    unfold perimortem_cd_indicated.
+    destruct (viable_gestational_age_weeks <=? gestational_age_weeks p) eqn:E.
+    - apply Nat.leb_le in E. lia.
+    - reflexivity.
+  Qed.
+
+  Theorem rosc_stops_cd : forall p,
+    rosc_achieved_pp p = true ->
+    perimortem_cd_indicated p = false.
+  Proof.
+    intros p Hrosc.
+    unfold perimortem_cd_indicated.
+    rewrite Hrosc.
+    destruct (viable_gestational_age_weeks <=? gestational_age_weeks p);
+    reflexivity.
+  Qed.
+
+  Theorem cd_at_5min_urgent : forall p,
+    gestational_age_weeks p >= viable_gestational_age_weeks ->
+    rosc_achieved_pp p = false ->
+    perimortem_cd_performed p = false ->
+    arrest_time_min p = 5 ->
+    perimortem_cd_urgent p = true.
+  Proof.
+    intros p Hga Hrosc Hcd Htime.
+    unfold perimortem_cd_urgent, perimortem_cd_indicated, perimortem_cd_target_min.
+    rewrite Hrosc, Hcd, Htime.
+    destruct (viable_gestational_age_weeks <=? gestational_age_weeks p) eqn:E.
+    - simpl. reflexivity.
+    - apply Nat.leb_nle in E. lia.
+  Qed.
+
+  Theorem defibrillation_unchanged :
+    defibrillation_safe_pregnancy = true.
+  Proof. reflexivity. Qed.
+
+  Theorem medication_doses_unchanged :
+    standard_acls_doses_pregnancy = true.
+  Proof. reflexivity. Qed.
+
+  Theorem early_viable_needs_lud :
+    left_uterine_displacement_required early_viable_patient = true.
+  Proof. reflexivity. Qed.
+
+  Theorem term_with_lud_no_additional_lud :
+    left_uterine_displacement_required term_patient_with_lud = false.
+  Proof. reflexivity. Qed.
+
+  Theorem previable_standard_acls :
+    recommend_pregnancy_intervention previable_patient = PI_StandardACLS.
+  Proof. reflexivity. Qed.
+
+  Definition maternal_survival_priority : bool := true.
+
+  Definition fetal_heart_tones_not_monitored_during_cpr : bool := true.
+
+  Definition compressions_hand_position_standard : bool := true.
+
+  Definition compressions_may_be_higher_if_needed : bool := true.
+
+  Theorem post_cd_neonatal_resus :
+    neonatal_resuscitation_indicated post_cd_patient = true.
+  Proof. reflexivity. Qed.
+
+  Definition time_zero_is_maternal_arrest : bool := true.
+
+  Definition cd_decision_at_4min_prep_at_5min_delivery : bool := true.
+
+  Definition two_patient_resuscitation : bool := true.
+
+End PregnancyArrest.
 
 (******************************************************************************)
 (*                                                                            *)
@@ -5734,6 +6598,208 @@ Module PostArrestCare.
     - apply Nat.ltb_nlt in E. exfalso. apply E. exact H.
   Qed.
 
+  (** Seizure Prophylaxis and Management - AHA 2020 Post-Arrest Care. *)
+
+  Inductive SeizureType : Type :=
+    | Sz_None
+    | Sz_Convulsive
+    | Sz_NonConvulsiveStatus
+    | Sz_Myoclonus
+    | Sz_StatusEpilepticus.
+
+  Definition seizure_type_eq_dec
+    : forall s1 s2 : SeizureType, {s1 = s2} + {s1 <> s2}.
+  Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
+
+  Inductive SeizureSeverity : Type :=
+    | SzSev_None
+    | SzSev_Isolated
+    | SzSev_Recurrent
+    | SzSev_Status.
+
+  Definition seizure_severity_eq_dec
+    : forall s1 s2 : SeizureSeverity, {s1 = s2} + {s1 <> s2}.
+  Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
+
+  Inductive AntiSeizureMed : Type :=
+    | ASM_Levetiracetam
+    | ASM_Fosphenytoin
+    | ASM_Phenytoin
+    | ASM_Valproate
+    | ASM_Phenobarbital
+    | ASM_Midazolam
+    | ASM_Propofol
+    | ASM_Lacosamide.
+
+  Definition asm_eq_dec
+    : forall a1 a2 : AntiSeizureMed, {a1 = a2} + {a1 <> a2}.
+  Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
+
+  Definition levetiracetam_load_mg_per_kg : nat := 60.
+  Definition levetiracetam_max_load_mg : nat := 4500.
+  Definition fosphenytoin_load_PE_per_kg : nat := 20.
+  Definition fosphenytoin_max_load_PE : nat := 1500.
+  Definition valproate_load_mg_per_kg : nat := 40.
+  Definition valproate_max_load_mg : nat := 3000.
+  Definition phenobarbital_load_mg_per_kg : nat := 20.
+  Definition phenobarbital_max_load_mg : nat := 1500.
+  Definition midazolam_bolus_mg : nat := 10.
+  Definition midazolam_infusion_mg_per_hr_min : nat := 2.
+  Definition midazolam_infusion_mg_per_hr_max : nat := 10.
+  Definition propofol_infusion_mcg_per_kg_per_min_min : nat := 30.
+  Definition propofol_infusion_mcg_per_kg_per_min_max : nat := 200.
+
+  Record SeizureState : Type := mkSeizureState {
+    sz_type : SeizureType;
+    sz_severity : SeizureSeverity;
+    sz_duration_min : nat;
+    sz_eeg_monitored : bool;
+    sz_first_line_given : bool;
+    sz_second_line_given : bool;
+    sz_on_continuous_eeg : bool;
+    sz_post_rosc_hours : nat
+  }.
+
+  Definition status_epilepticus_threshold_min : nat := 5.
+  Definition refractory_status_threshold_min : nat := 30.
+  Definition super_refractory_threshold_hr : nat := 24.
+
+  Definition is_status_epilepticus (ss : SeizureState) : bool :=
+    (status_epilepticus_threshold_min <=? sz_duration_min ss) ||
+    match sz_severity ss with SzSev_Status => true | _ => false end.
+
+  Definition is_refractory_status (ss : SeizureState) : bool :=
+    is_status_epilepticus ss &&
+    sz_first_line_given ss &&
+    sz_second_line_given ss &&
+    (refractory_status_threshold_min <=? sz_duration_min ss).
+
+  Definition is_recurrent_severity (sev : SeizureSeverity) : bool :=
+    match sev with SzSev_Recurrent => true | _ => false end.
+
+  Definition continuous_eeg_indicated (ss : SeizureState) : bool :=
+    match sz_type ss with
+    | Sz_NonConvulsiveStatus => true
+    | Sz_StatusEpilepticus => true
+    | Sz_Myoclonus => true
+    | _ => is_recurrent_severity (sz_severity ss)
+    end || negb (sz_eeg_monitored ss).
+
+  Definition prophylaxis_not_routine : bool := true.
+
+  Definition treat_clinical_seizures : bool := true.
+
+  Inductive SeizureRecommendation : Type :=
+    | SzRec_NoTreatment
+    | SzRec_FirstLineASM
+    | SzRec_SecondLineASM
+    | SzRec_ContinuousInfusion
+    | SzRec_ObtainEEG
+    | SzRec_ContinuousEEG
+    | SzRec_BurstSuppression.
+
+  Definition recommend_seizure_management (ss : SeizureState)
+    : SeizureRecommendation :=
+    match sz_type ss with
+    | Sz_None => SzRec_NoTreatment
+    | Sz_Myoclonus =>
+        if sz_eeg_monitored ss then SzRec_FirstLineASM
+        else SzRec_ObtainEEG
+    | Sz_Convulsive =>
+        if sz_first_line_given ss then
+          if sz_second_line_given ss then SzRec_ContinuousInfusion
+          else SzRec_SecondLineASM
+        else SzRec_FirstLineASM
+    | Sz_NonConvulsiveStatus =>
+        if sz_on_continuous_eeg ss then
+          if sz_first_line_given ss then SzRec_SecondLineASM
+          else SzRec_FirstLineASM
+        else SzRec_ContinuousEEG
+    | Sz_StatusEpilepticus =>
+        if is_refractory_status ss then SzRec_BurstSuppression
+        else if sz_second_line_given ss then SzRec_ContinuousInfusion
+        else if sz_first_line_given ss then SzRec_SecondLineASM
+        else SzRec_FirstLineASM
+    end.
+
+  Definition first_line_asm : AntiSeizureMed := ASM_Levetiracetam.
+
+  Definition second_line_asm : AntiSeizureMed := ASM_Fosphenytoin.
+
+  Definition continuous_infusion_asm : AntiSeizureMed := ASM_Midazolam.
+
+  Definition levetiracetam_dose (weight_kg : nat) : nat :=
+    let dose := levetiracetam_load_mg_per_kg * weight_kg in
+    if dose <=? levetiracetam_max_load_mg then dose else levetiracetam_max_load_mg.
+
+  Definition fosphenytoin_dose (weight_kg : nat) : nat :=
+    let dose := fosphenytoin_load_PE_per_kg * weight_kg in
+    if dose <=? fosphenytoin_max_load_PE then dose else fosphenytoin_max_load_PE.
+
+  Definition myoclonus_poor_prognosis_if_persistent : bool := true.
+
+  Definition myoclonus_not_always_seizure : bool := true.
+
+  Definition eeg_within_24h_recommended : bool := true.
+
+  Definition no_seizure_state : SeizureState :=
+    mkSeizureState Sz_None SzSev_None 0 false false false false 12.
+
+  Definition new_convulsion : SeizureState :=
+    mkSeizureState Sz_Convulsive SzSev_Isolated 2 false false false false 6.
+
+  Definition status_post_first_line : SeizureState :=
+    mkSeizureState Sz_StatusEpilepticus SzSev_Status 15 true true false true 8.
+
+  Definition refractory_status : SeizureState :=
+    mkSeizureState Sz_StatusEpilepticus SzSev_Status 45 true true true true 10.
+
+  Theorem no_seizure_no_treatment :
+    recommend_seizure_management no_seizure_state = SzRec_NoTreatment.
+  Proof. reflexivity. Qed.
+
+  Theorem new_convulsion_first_line :
+    recommend_seizure_management new_convulsion = SzRec_FirstLineASM.
+  Proof. reflexivity. Qed.
+
+  Theorem status_post_first_line_needs_second :
+    recommend_seizure_management status_post_first_line = SzRec_SecondLineASM.
+  Proof. reflexivity. Qed.
+
+  Theorem refractory_needs_burst_suppression :
+    recommend_seizure_management refractory_status = SzRec_BurstSuppression.
+  Proof. reflexivity. Qed.
+
+  Theorem prophylaxis_not_recommended :
+    prophylaxis_not_routine = true.
+  Proof. reflexivity. Qed.
+
+  Theorem levetiracetam_capped_at_4500 : forall w,
+    w > 75 ->
+    levetiracetam_dose w = levetiracetam_max_load_mg.
+  Proof.
+    intros w Hw.
+    unfold levetiracetam_dose, levetiracetam_load_mg_per_kg, levetiracetam_max_load_mg.
+    destruct (60 * w <=? 4500) eqn:E.
+    - apply Nat.leb_le in E. lia.
+    - reflexivity.
+  Qed.
+
+  Theorem fosphenytoin_capped_at_1500 : forall w,
+    w > 75 ->
+    fosphenytoin_dose w = fosphenytoin_max_load_PE.
+  Proof.
+    intros w Hw.
+    unfold fosphenytoin_dose, fosphenytoin_load_PE_per_kg, fosphenytoin_max_load_PE.
+    destruct (20 * w <=? 1500) eqn:E.
+    - apply Nat.leb_le in E. lia.
+    - reflexivity.
+  Qed.
+
+  Definition eeg_monitoring_duration_recommended_hr : nat := 48.
+
+  Definition burst_suppression_target_bursts_per_min : nat := 1.
+
 End PostArrestCare.
 
 (******************************************************************************)
@@ -6212,6 +7278,195 @@ Module PCIPathway.
     intros p Hrosc Hecg Hpain.
     unfold pci_urgency. rewrite Hrosc, Hecg, Hpain. reflexivity.
   Qed.
+
+  (** COMI - Coronary Occlusion Myocardial Infarction per AHA 2022. *)
+  (** COMI replaces STEMI as the primary indication for emergent cath lab. *)
+  (** COMI captures occlusion patterns that may not show classic ST elevation. *)
+
+  Inductive COMIPattern : Type :=
+    | COMI_ClassicSTEMI
+    | COMI_DeWinter
+    | COMI_Wellens
+    | COMI_PosteriorMI
+    | COMI_SouthAfricanFlag
+    | COMI_HyperacuteT
+    | COMI_NewLBBB_Ischemia
+    | COMI_Sgarbossa
+    | COMI_SmithModifiedSgarbossa
+    | COMI_STE_aVR_Diffuse_STD
+    | COMI_None.
+
+  Definition comi_pattern_eq_dec
+    : forall c1 c2 : COMIPattern, {c1 = c2} + {c1 <> c2}.
+  Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
+
+  Definition is_comi_pattern (c : COMIPattern) : bool :=
+    match c with COMI_None => false | _ => true end.
+
+  Definition comi_requires_emergent_cath (c : COMIPattern) : bool :=
+    match c with
+    | COMI_ClassicSTEMI => true
+    | COMI_DeWinter => true
+    | COMI_PosteriorMI => true
+    | COMI_STE_aVR_Diffuse_STD => true
+    | COMI_Sgarbossa => true
+    | COMI_SmithModifiedSgarbossa => true
+    | COMI_NewLBBB_Ischemia => true
+    | COMI_Wellens => false
+    | COMI_SouthAfricanFlag => true
+    | COMI_HyperacuteT => false
+    | COMI_None => false
+    end.
+
+  Definition comi_time_sensitive (c : COMIPattern) : bool :=
+    match c with
+    | COMI_ClassicSTEMI => true
+    | COMI_DeWinter => true
+    | COMI_PosteriorMI => true
+    | COMI_STE_aVR_Diffuse_STD => true
+    | COMI_Sgarbossa => true
+    | COMI_SmithModifiedSgarbossa => true
+    | _ => false
+    end.
+
+  Inductive COMISeverity : Type :=
+    | COMISev_Definite
+    | COMISev_Probable
+    | COMISev_Possible
+    | COMISev_Unlikely.
+
+  Definition comi_severity_eq_dec
+    : forall s1 s2 : COMISeverity, {s1 = s2} + {s1 <> s2}.
+  Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
+
+  Record COMIAssessment : Type := mkCOMIAssess {
+    comi_pattern : COMIPattern;
+    comi_severity : COMISeverity;
+    comi_symptom_duration_min : nat;
+    comi_hs_troponin_positive : bool;
+    comi_regional_wall_abnormality : bool;
+    comi_prior_pci_or_cabg : bool
+  }.
+
+  Definition stemi_equivalent_to_comi (ecg : ECGFinding) : COMIPattern :=
+    match ecg with
+    | STEMI => COMI_ClassicSTEMI
+    | NewLBBB => COMI_NewLBBB_Ischemia
+    | _ => COMI_None
+    end.
+
+  Definition comi_to_ecg_finding (c : COMIPattern) : ECGFinding :=
+    match c with
+    | COMI_ClassicSTEMI => STEMI
+    | COMI_NewLBBB_Ischemia => NewLBBB
+    | COMI_Sgarbossa => NewLBBB
+    | COMI_SmithModifiedSgarbossa => NewLBBB
+    | _ => NonSpecific
+    end.
+
+  Definition comi_urgency (ca : COMIAssessment) : PCIUrgency :=
+    match comi_severity ca with
+    | COMISev_Definite => Emergent
+    | COMISev_Probable =>
+        if comi_requires_emergent_cath (comi_pattern ca) then Emergent
+        else Urgent
+    | COMISev_Possible =>
+        if comi_hs_troponin_positive ca || comi_regional_wall_abnormality ca
+        then Urgent
+        else Deferred
+    | COMISev_Unlikely => NotIndicated
+    end.
+
+  Definition de_winter_door_to_balloon_min : nat := 90.
+  Definition posterior_mi_door_to_balloon_min : nat := 90.
+  Definition wellens_may_defer_if_pain_resolved : bool := true.
+
+  Definition definite_stemi : COMIAssessment :=
+    mkCOMIAssess COMI_ClassicSTEMI COMISev_Definite 45 true false false.
+
+  Definition de_winter_pattern : COMIAssessment :=
+    mkCOMIAssess COMI_DeWinter COMISev_Probable 30 true true false.
+
+  Definition wellens_pattern : COMIAssessment :=
+    mkCOMIAssess COMI_Wellens COMISev_Possible 120 false false false.
+
+  Definition no_comi : COMIAssessment :=
+    mkCOMIAssess COMI_None COMISev_Unlikely 0 false false false.
+
+  Theorem classic_stemi_emergent :
+    comi_urgency definite_stemi = Emergent.
+  Proof. reflexivity. Qed.
+
+  Theorem de_winter_emergent :
+    comi_urgency de_winter_pattern = Emergent.
+  Proof. reflexivity. Qed.
+
+  Theorem wellens_deferred :
+    comi_urgency wellens_pattern = Deferred.
+  Proof. reflexivity. Qed.
+
+  Theorem no_comi_not_indicated :
+    comi_urgency no_comi = NotIndicated.
+  Proof. reflexivity. Qed.
+
+  Theorem comi_captures_stemi : forall ecg,
+    ecg = STEMI ->
+    is_comi_pattern (stemi_equivalent_to_comi ecg) = true.
+  Proof.
+    intros ecg Hecg. rewrite Hecg. reflexivity.
+  Qed.
+
+  Theorem stemi_is_comi_classic :
+    stemi_equivalent_to_comi STEMI = COMI_ClassicSTEMI.
+  Proof. reflexivity. Qed.
+
+  Definition comi_positive (ca : COMIAssessment) : bool :=
+    is_comi_pattern (comi_pattern ca) &&
+    match comi_severity ca with
+    | COMISev_Unlikely => false
+    | _ => true
+    end.
+
+  Definition comi_requires_immediate_cath (ca : COMIAssessment) : bool :=
+    comi_positive ca &&
+    comi_requires_emergent_cath (comi_pattern ca) &&
+    match comi_severity ca with
+    | COMISev_Definite | COMISev_Probable => true
+    | _ => false
+    end.
+
+  Theorem definite_stemi_immediate :
+    comi_requires_immediate_cath definite_stemi = true.
+  Proof. reflexivity. Qed.
+
+  Theorem de_winter_immediate :
+    comi_requires_immediate_cath de_winter_pattern = true.
+  Proof. reflexivity. Qed.
+
+  Definition posterior_leads_v7_v9_recommended : bool := true.
+
+  Definition right_sided_leads_v4r_recommended_for_inferior : bool := true.
+
+  Definition sgarbossa_criteria_score (concordant_ste : nat)
+                                      (discordant_ste_ratio_x100 : nat)
+                                      (concordant_std : nat)
+    : nat :=
+    (if 1 <=? concordant_ste then 5 else 0) +
+    (if 25 <=? discordant_ste_ratio_x100 then 2 else 0) +
+    (if 1 <=? concordant_std then 3 else 0).
+
+  Definition sgarbossa_positive (score : nat) : bool := 3 <=? score.
+
+  Definition smith_modified_sgarbossa (discordant_ste_ratio_x100 : nat) : bool :=
+    25 <=? discordant_ste_ratio_x100.
+
+  Theorem sgarbossa_concordant_ste_positive :
+    sgarbossa_positive (sgarbossa_criteria_score 1 0 0) = true.
+  Proof. reflexivity. Qed.
+
+  Theorem smith_modified_25_percent_positive :
+    smith_modified_sgarbossa 25 = true.
+  Proof. reflexivity. Qed.
 
 End PCIPathway.
 

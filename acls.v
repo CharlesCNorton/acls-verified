@@ -537,6 +537,251 @@ Module CPR.
     is_sudden_rise 15 25 = false.
   Proof. reflexivity. Qed.
 
+  Definition cpr_fraction_target_pct : nat := 80.
+  Definition cpr_fraction_minimum_pct : nat := 60.
+  Definition compressor_rotation_interval_sec : nat := 120.
+
+  Record CPRFractionTracker : Type := mkCPRFraction {
+    total_chest_on_time_sec : nat;
+    total_elapsed_time_sec : nat;
+    total_pause_time_sec : nat;
+    pause_count : nat;
+    longest_pause_sec : nat;
+    current_pause_start : option nat
+  }.
+
+  Definition initial_cpr_fraction_tracker : CPRFractionTracker :=
+    mkCPRFraction 0 0 0 0 0 None.
+
+  Definition cpr_fraction_pct (t : CPRFractionTracker) : nat :=
+    if total_elapsed_time_sec t =? 0 then 100
+    else (total_chest_on_time_sec t * 100) / total_elapsed_time_sec t.
+
+  Definition cpr_fraction_adequate (t : CPRFractionTracker) : bool :=
+    cpr_fraction_minimum_pct <=? cpr_fraction_pct t.
+
+  Definition cpr_fraction_optimal (t : CPRFractionTracker) : bool :=
+    cpr_fraction_target_pct <=? cpr_fraction_pct t.
+
+  Definition start_pause (t : CPRFractionTracker) (at_time_sec : nat) : CPRFractionTracker :=
+    mkCPRFraction
+      (total_chest_on_time_sec t)
+      (total_elapsed_time_sec t)
+      (total_pause_time_sec t)
+      (pause_count t)
+      (longest_pause_sec t)
+      (Some at_time_sec).
+
+  Definition end_pause (t : CPRFractionTracker) (at_time_sec : nat) : CPRFractionTracker :=
+    match current_pause_start t with
+    | None => t
+    | Some start =>
+        let pause_duration := at_time_sec - start in
+        mkCPRFraction
+          (total_chest_on_time_sec t)
+          (total_elapsed_time_sec t + pause_duration)
+          (total_pause_time_sec t + pause_duration)
+          (S (pause_count t))
+          (Nat.max (longest_pause_sec t) pause_duration)
+          None
+    end.
+
+  Definition add_compression_time (t : CPRFractionTracker) (duration_sec : nat) : CPRFractionTracker :=
+    mkCPRFraction
+      (total_chest_on_time_sec t + duration_sec)
+      (total_elapsed_time_sec t + duration_sec)
+      (total_pause_time_sec t)
+      (pause_count t)
+      (longest_pause_sec t)
+      None.
+
+  Theorem initial_fraction_100 :
+    cpr_fraction_pct initial_cpr_fraction_tracker = 100.
+  Proof. reflexivity. Qed.
+
+  Definition sample_good_cpr : CPRFractionTracker :=
+    mkCPRFraction 100 120 20 3 8 None.
+
+  Definition sample_poor_cpr : CPRFractionTracker :=
+    mkCPRFraction 50 120 70 10 15 None.
+
+  Theorem good_cpr_adequate :
+    cpr_fraction_adequate sample_good_cpr = true.
+  Proof. reflexivity. Qed.
+
+  Theorem good_cpr_optimal :
+    cpr_fraction_optimal sample_good_cpr = true.
+  Proof. reflexivity. Qed.
+
+  Theorem poor_cpr_not_adequate :
+    cpr_fraction_adequate sample_poor_cpr = false.
+  Proof. reflexivity. Qed.
+
+  Record CompressorRotation : Type := mkCompressorRotation {
+    current_compressor_id : nat;
+    compression_start_time_sec : nat;
+    total_compressors_used : nat;
+    rotation_times_sec : list nat
+  }.
+
+  Definition initial_compressor_rotation (start_time_sec : nat) : CompressorRotation :=
+    mkCompressorRotation 1 start_time_sec 1 [start_time_sec].
+
+  Definition compressor_needs_rotation (cr : CompressorRotation) (current_time_sec : nat) : bool :=
+    compressor_rotation_interval_sec <=? (current_time_sec - compression_start_time_sec cr).
+
+  Definition rotate_compressor (cr : CompressorRotation) (current_time_sec : nat) : CompressorRotation :=
+    mkCompressorRotation
+      (S (current_compressor_id cr))
+      current_time_sec
+      (S (total_compressors_used cr))
+      (rotation_times_sec cr ++ [current_time_sec]).
+
+  Theorem rotation_needed_at_2min :
+    compressor_needs_rotation (initial_compressor_rotation 0) 120 = true.
+  Proof. reflexivity. Qed.
+
+  Theorem rotation_not_needed_at_1min :
+    compressor_needs_rotation (initial_compressor_rotation 0) 60 = false.
+  Proof. reflexivity. Qed.
+
+  Inductive MechanicalCPRDevice : Type :=
+    | LUCAS
+    | AutoPulse
+    | LifeStat
+    | NoDevice.
+
+  Definition mechanical_cpr_device_eq_dec
+    : forall d1 d2 : MechanicalCPRDevice, {d1 = d2} + {d1 <> d2}.
+  Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
+
+  Definition mechanical_cpr_depth_cm (d : MechanicalCPRDevice) : nat :=
+    match d with
+    | LUCAS => 5
+    | AutoPulse => 5
+    | LifeStat => 5
+    | NoDevice => 0
+    end.
+
+  Definition mechanical_cpr_rate (d : MechanicalCPRDevice) : nat :=
+    match d with
+    | LUCAS => 102
+    | AutoPulse => 80
+    | LifeStat => 100
+    | NoDevice => 0
+    end.
+
+  Definition mechanical_cpr_provides_decompression (d : MechanicalCPRDevice) : bool :=
+    match d with
+    | LUCAS => true
+    | AutoPulse => false
+    | LifeStat => true
+    | NoDevice => false
+    end.
+
+  Inductive MechanicalCPRIndication : Type :=
+    | MechCPR_Transport
+    | MechCPR_ProlongedResus
+    | MechCPR_CathLab
+    | MechCPR_ECPR
+    | MechCPR_LimitedPersonnel
+    | MechCPR_ProviderFatigue.
+
+  Definition mechanical_cpr_indication_eq_dec
+    : forall i1 i2 : MechanicalCPRIndication, {i1 = i2} + {i1 <> i2}.
+  Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
+
+  Record MechanicalCPRState : Type := mkMechCPR {
+    mech_device : MechanicalCPRDevice;
+    mech_indication : option MechanicalCPRIndication;
+    mech_start_time_sec : option nat;
+    mech_active : bool
+  }.
+
+  Definition no_mechanical_cpr : MechanicalCPRState :=
+    mkMechCPR NoDevice None None false.
+
+  Definition start_mechanical_cpr (d : MechanicalCPRDevice) (ind : MechanicalCPRIndication) (t : nat) : MechanicalCPRState :=
+    mkMechCPR d (Some ind) (Some t) true.
+
+  Definition mechanical_cpr_quality_adequate (ms : MechanicalCPRState) : bool :=
+    mech_active ms &&
+    match mech_device ms with
+    | NoDevice => false
+    | _ => true
+    end.
+
+  Definition should_consider_mechanical_cpr
+    (duration_min : nat) (transport_needed : bool) (cath_lab_activation : bool)
+    (personnel_count : nat) (cpr_fraction : nat) : bool :=
+    transport_needed ||
+    cath_lab_activation ||
+    (30 <=? duration_min) ||
+    (personnel_count <? 3) ||
+    (cpr_fraction <? cpr_fraction_minimum_pct).
+
+  Theorem transport_indicates_mechanical :
+    should_consider_mechanical_cpr 10 true false 4 85 = true.
+  Proof. reflexivity. Qed.
+
+  Theorem cath_lab_indicates_mechanical :
+    should_consider_mechanical_cpr 10 false true 4 85 = true.
+  Proof. reflexivity. Qed.
+
+  Theorem prolonged_resus_indicates_mechanical :
+    should_consider_mechanical_cpr 35 false false 4 85 = true.
+  Proof. reflexivity. Qed.
+
+  Theorem poor_fraction_indicates_mechanical :
+    should_consider_mechanical_cpr 10 false false 4 50 = true.
+  Proof. reflexivity. Qed.
+
+  Theorem good_resus_no_mechanical :
+    should_consider_mechanical_cpr 10 false false 4 85 = false.
+  Proof. reflexivity. Qed.
+
+  Definition perishock_pause_max_sec : nat := 10.
+  Definition pre_shock_pause_ideal_sec : nat := 3.
+  Definition post_shock_pause_ideal_sec : nat := 0.
+
+  Record PerishockPauseTracker : Type := mkPerishockPause {
+    pre_shock_pauses_sec : list nat;
+    post_shock_pauses_sec : list nat;
+    total_perishock_pause_sec : nat;
+    shock_count_perishock : nat
+  }.
+
+  Definition initial_perishock_tracker : PerishockPauseTracker :=
+    mkPerishockPause [] [] 0 0.
+
+  Definition record_shock_pause (pt : PerishockPauseTracker) (pre_sec post_sec : nat) : PerishockPauseTracker :=
+    mkPerishockPause
+      (pre_shock_pauses_sec pt ++ [pre_sec])
+      (post_shock_pauses_sec pt ++ [post_sec])
+      (total_perishock_pause_sec pt + pre_sec + post_sec)
+      (S (shock_count_perishock pt)).
+
+  Definition average_perishock_pause (pt : PerishockPauseTracker) : nat :=
+    if shock_count_perishock pt =? 0 then 0
+    else total_perishock_pause_sec pt / shock_count_perishock pt.
+
+  Definition perishock_pauses_acceptable (pt : PerishockPauseTracker) : bool :=
+    average_perishock_pause pt <=? perishock_pause_max_sec.
+
+  Definition sample_good_perishock : PerishockPauseTracker :=
+    mkPerishockPause [3; 4; 3] [1; 1; 2] 14 3.
+
+  Definition sample_poor_perishock : PerishockPauseTracker :=
+    mkPerishockPause [8; 10; 12] [5; 6; 7] 48 3.
+
+  Theorem good_perishock_acceptable :
+    perishock_pauses_acceptable sample_good_perishock = true.
+  Proof. reflexivity. Qed.
+
+  Theorem poor_perishock_not_acceptable :
+    perishock_pauses_acceptable sample_poor_perishock = false.
+  Proof. reflexivity. Qed.
+
 End CPR.
 
 (******************************************************************************)
@@ -1625,6 +1870,250 @@ Module Medication.
 
   Theorem lidocaine_infusion_5mg_invalid : lidocaine_infusion_rate_valid 5 = false.
   Proof. reflexivity. Qed.
+
+  Inductive CalciumType : Type :=
+    | CaCl2_Central
+    | CaGluconate_Peripheral.
+
+  Definition calcium_type_eq_dec : forall c1 c2 : CalciumType, {c1 = c2} + {c1 <> c2}.
+  Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
+
+  Definition calcium_requires_central_line (ct : CalciumType) : bool :=
+    match ct with
+    | CaCl2_Central => true
+    | CaGluconate_Peripheral => false
+    end.
+
+  Definition calcium_elemental_mg (ct : CalciumType) (dose_mg : nat) : nat :=
+    match ct with
+    | CaCl2_Central => (dose_mg * 272) / 1000
+    | CaGluconate_Peripheral => (dose_mg * 93) / 1000
+    end.
+
+  Definition calcium_equivalent_dose (from_type to_type : CalciumType) (dose_mg : nat) : nat :=
+    let elemental := calcium_elemental_mg from_type dose_mg in
+    match to_type with
+    | CaCl2_Central => (elemental * 1000) / 272
+    | CaGluconate_Peripheral => (elemental * 1000) / 93
+    end.
+
+  Definition recommend_calcium_type (has_central_access : bool) : CalciumType :=
+    if has_central_access then CaCl2_Central else CaGluconate_Peripheral.
+
+  Definition calcium_dose_for_type (ct : CalciumType) : nat :=
+    match ct with
+    | CaCl2_Central => calcium_chloride_dose_mg
+    | CaGluconate_Peripheral => calcium_gluconate_dose_mg
+    end.
+
+  Definition calcium_infusion_rate_mg_per_min_max : nat := 100.
+  Definition calcium_repeat_interval_min : nat := 5.
+  Definition calcium_max_doses_hyperkalemia : nat := 3.
+
+  Theorem cacl2_requires_central : calcium_requires_central_line CaCl2_Central = true.
+  Proof. reflexivity. Qed.
+
+  Theorem gluconate_peripheral_ok : calcium_requires_central_line CaGluconate_Peripheral = false.
+  Proof. reflexivity. Qed.
+
+  Theorem cacl2_1g_elemental : calcium_elemental_mg CaCl2_Central 1000 = 272.
+  Proof. reflexivity. Qed.
+
+  Theorem gluconate_3g_elemental : calcium_elemental_mg CaGluconate_Peripheral 3000 = 279.
+  Proof. reflexivity. Qed.
+
+  Definition magnesium_repeat_dose_mg : nat := 2000.
+  Definition magnesium_repeat_interval_min : nat := 5.
+  Definition magnesium_max_doses_torsades : nat := 3.
+  Definition magnesium_infusion_rate_mg_per_min_arrest : nat := 2000.
+  Definition magnesium_infusion_rate_mg_per_min_stable : nat := 50.
+  Definition magnesium_infusion_duration_min_arrest : nat := 1.
+  Definition magnesium_infusion_duration_min_stable : nat := 60.
+
+  Record MagnesiumDosing : Type := mkMgDosing {
+    mg_doses_given : nat;
+    mg_last_dose_time_sec : option nat;
+    mg_total_mg : nat;
+    mg_is_torsades : bool
+  }.
+
+  Definition initial_mg_dosing (is_torsades : bool) : MagnesiumDosing :=
+    mkMgDosing 0 None 0 is_torsades.
+
+  Definition can_give_magnesium_repeat (md : MagnesiumDosing) (current_time_sec : nat) : bool :=
+    (mg_doses_given md <? magnesium_max_doses_torsades) &&
+    mg_is_torsades md &&
+    match mg_last_dose_time_sec md with
+    | None => true
+    | Some last => (magnesium_repeat_interval_min * 60) <=? (current_time_sec - last)
+    end.
+
+  Definition give_magnesium_dose (md : MagnesiumDosing) (current_time_sec : nat) : MagnesiumDosing :=
+    mkMgDosing
+      (S (mg_doses_given md))
+      (Some current_time_sec)
+      (mg_total_mg md + magnesium_repeat_dose_mg)
+      (mg_is_torsades md).
+
+  Theorem first_mg_always_allowed : forall t,
+    can_give_magnesium_repeat (initial_mg_dosing true) t = true.
+  Proof. reflexivity. Qed.
+
+  Theorem fourth_mg_blocked : forall md t,
+    mg_doses_given md >= 3 ->
+    can_give_magnesium_repeat md t = false.
+  Proof.
+    intros md t H.
+    unfold can_give_magnesium_repeat, magnesium_max_doses_torsades.
+    destruct (mg_doses_given md <? 3) eqn:E.
+    - apply Nat.ltb_lt in E. lia.
+    - reflexivity.
+  Qed.
+
+  Inductive AdenosineEscalation : Type :=
+    | Adenosine_First_6mg
+    | Adenosine_Second_12mg
+    | Adenosine_Third_12mg
+    | Adenosine_Refractory.
+
+  Definition adenosine_escalation_eq_dec
+    : forall a1 a2 : AdenosineEscalation, {a1 = a2} + {a1 <> a2}.
+  Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
+
+  Definition adenosine_dose_for_escalation (e : AdenosineEscalation) : nat :=
+    match e with
+    | Adenosine_First_6mg => 6
+    | Adenosine_Second_12mg => 12
+    | Adenosine_Third_12mg => 12
+    | Adenosine_Refractory => 0
+    end.
+
+  Definition adenosine_next_escalation (e : AdenosineEscalation) : AdenosineEscalation :=
+    match e with
+    | Adenosine_First_6mg => Adenosine_Second_12mg
+    | Adenosine_Second_12mg => Adenosine_Third_12mg
+    | Adenosine_Third_12mg => Adenosine_Refractory
+    | Adenosine_Refractory => Adenosine_Refractory
+    end.
+
+  Definition adenosine_can_escalate (e : AdenosineEscalation) : bool :=
+    match e with
+    | Adenosine_Refractory => false
+    | _ => true
+    end.
+
+  Definition adenosine_interval_min_sec : nat := 60.
+  Definition adenosine_interval_max_sec : nat := 120.
+
+  Record AdenosineState : Type := mkAdenoState {
+    adeno_current_escalation : AdenosineEscalation;
+    adeno_last_dose_time_sec : option nat;
+    adeno_total_doses : nat;
+    adeno_converted : bool
+  }.
+
+  Definition initial_adenosine_state : AdenosineState :=
+    mkAdenoState Adenosine_First_6mg None 0 false.
+
+  Definition adenosine_dose_indicated (as_ : AdenosineState) (current_time_sec : nat) : bool :=
+    negb (adeno_converted as_) &&
+    adenosine_can_escalate (adeno_current_escalation as_) &&
+    match adeno_last_dose_time_sec as_ with
+    | None => true
+    | Some last => adenosine_interval_min_sec <=? (current_time_sec - last)
+    end.
+
+  Definition give_adenosine (as_ : AdenosineState) (current_time_sec : nat) (converted : bool) : AdenosineState :=
+    mkAdenoState
+      (if converted then adeno_current_escalation as_ else adenosine_next_escalation (adeno_current_escalation as_))
+      (Some current_time_sec)
+      (S (adeno_total_doses as_))
+      converted.
+
+  Theorem first_adenosine_6mg :
+    adenosine_dose_for_escalation (adeno_current_escalation initial_adenosine_state) = 6.
+  Proof. reflexivity. Qed.
+
+  Theorem after_first_adenosine_12mg :
+    adenosine_dose_for_escalation (adenosine_next_escalation Adenosine_First_6mg) = 12.
+  Proof. reflexivity. Qed.
+
+  Theorem refractory_no_more_adenosine :
+    adenosine_can_escalate Adenosine_Refractory = false.
+  Proof. reflexivity. Qed.
+
+  Definition vasopressin_replaces_epi_dose : nat := 1.
+  Definition vasopressin_max_doses : nat := 1.
+  Definition vasopressin_timing_with_epi : bool := true.
+
+  Record VasopressinState : Type := mkVasoState {
+    vaso_doses_given : nat;
+    vaso_given_time_sec : option nat;
+    vaso_replaced_epi_number : option nat
+  }.
+
+  Definition initial_vasopressin_state : VasopressinState :=
+    mkVasoState 0 None None.
+
+  Definition can_give_vasopressin (vs : VasopressinState) (epi_doses : nat) : bool :=
+    (vaso_doses_given vs =? 0) &&
+    (1 <=? epi_doses).
+
+  Definition give_vasopressin (vs : VasopressinState) (current_time_sec : nat) (replacing_epi_num : nat) : VasopressinState :=
+    mkVasoState 1 (Some current_time_sec) (Some replacing_epi_num).
+
+  Theorem vasopressin_single_dose_only : forall vs n,
+    vaso_doses_given vs >= 1 ->
+    can_give_vasopressin vs n = false.
+  Proof.
+    intros vs n H.
+    unfold can_give_vasopressin.
+    destruct (vaso_doses_given vs =? 0) eqn:E.
+    - apply Nat.eqb_eq in E. lia.
+    - reflexivity.
+  Qed.
+
+  Definition atropine_doses_bradycardia : nat := 6.
+  Definition atropine_total_max_mg_x10 : nat := 30.
+
+  Record AtropineState : Type := mkAtropineState {
+    atropine_doses_given : nat;
+    atropine_total_mg_x10 : nat;
+    atropine_last_dose_time_sec : option nat
+  }.
+
+  Definition initial_atropine_state : AtropineState :=
+    mkAtropineState 0 0 None.
+
+  Definition can_give_atropine (as_ : AtropineState) : bool :=
+    (atropine_total_mg_x10 as_ <? atropine_total_max_mg_x10).
+
+  Definition give_atropine (as_ : AtropineState) (current_time_sec : nat) : AtropineState :=
+    mkAtropineState
+      (S (atropine_doses_given as_))
+      (atropine_total_mg_x10 as_ + atropine_dose_mg_x10)
+      (Some current_time_sec).
+
+  Definition atropine_interval_valid (as_ : AtropineState) (current_time_sec : nat) : bool :=
+    match atropine_last_dose_time_sec as_ with
+    | None => true
+    | Some last => (atropine_interval_min * 60) <=? (current_time_sec - last)
+    end.
+
+  Theorem atropine_max_6_doses :
+    atropine_total_max_mg_x10 / atropine_dose_mg_x10 = 6.
+  Proof. reflexivity. Qed.
+
+  Theorem seventh_atropine_blocked : forall as_,
+    atropine_total_mg_x10 as_ >= 30 ->
+    can_give_atropine as_ = false.
+  Proof.
+    intros as_ H.
+    unfold can_give_atropine, atropine_total_max_mg_x10.
+    destruct (atropine_total_mg_x10 as_ <? 30) eqn:E.
+    - apply Nat.ltb_lt in E. lia.
+    - reflexivity.
+  Qed.
 
 End Medication.
 
@@ -3783,6 +4272,267 @@ Module ReversibleCauseTreatment.
     unfold recommend_for_cause. rewrite Hcause, Hlipid. reflexivity.
   Qed.
 
+  Inductive AirwayLevel : Type :=
+    | AL_NoIntervention
+    | AL_SupplementalO2
+    | AL_HighFlowNasalCannula
+    | AL_NIPPV
+    | AL_BVM
+    | AL_SupraglotticAirway
+    | AL_EndotrachealTube
+    | AL_SurgicalAirway.
+
+  Definition airway_level_eq_dec : forall a1 a2 : AirwayLevel, {a1 = a2} + {a1 <> a2}.
+  Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
+
+  Definition fio2_for_airway_level (al : AirwayLevel) : nat :=
+    match al with
+    | AL_NoIntervention => 21
+    | AL_SupplementalO2 => 40
+    | AL_HighFlowNasalCannula => 100
+    | AL_NIPPV => 100
+    | AL_BVM => 100
+    | AL_SupraglotticAirway => 100
+    | AL_EndotrachealTube => 100
+    | AL_SurgicalAirway => 100
+    end.
+
+  Definition escalate_airway (al : AirwayLevel) : AirwayLevel :=
+    match al with
+    | AL_NoIntervention => AL_SupplementalO2
+    | AL_SupplementalO2 => AL_HighFlowNasalCannula
+    | AL_HighFlowNasalCannula => AL_BVM
+    | AL_NIPPV => AL_BVM
+    | AL_BVM => AL_EndotrachealTube
+    | AL_SupraglotticAirway => AL_EndotrachealTube
+    | AL_EndotrachealTube => AL_SurgicalAirway
+    | AL_SurgicalAirway => AL_SurgicalAirway
+    end.
+
+  Definition airway_is_definitive (al : AirwayLevel) : bool :=
+    match al with
+    | AL_EndotrachealTube => true
+    | AL_SurgicalAirway => true
+    | _ => false
+    end.
+
+  Definition airway_escalation_indicated (spo2 : nat) (current : AirwayLevel) : bool :=
+    (spo2 <? 90) && negb (airway_is_definitive current).
+
+  Definition target_spo2_min : nat := 94.
+  Definition target_spo2_max_arrest : nat := 100.
+
+  Theorem escalate_from_nasal_cannula :
+    escalate_airway AL_SupplementalO2 = AL_HighFlowNasalCannula.
+  Proof. reflexivity. Qed.
+
+  Theorem ett_is_definitive :
+    airway_is_definitive AL_EndotrachealTube = true.
+  Proof. reflexivity. Qed.
+
+  Inductive NeedleDecompSite : Type :=
+    | NDS_2ndICS_MCL
+    | NDS_5thICS_AAL.
+
+  Definition needle_decomp_site_eq_dec
+    : forall s1 s2 : NeedleDecompSite, {s1 = s2} + {s1 <> s2}.
+  Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
+
+  Definition needle_length_for_site (site : NeedleDecompSite) : nat :=
+    match site with
+    | NDS_2ndICS_MCL => 8
+    | NDS_5thICS_AAL => 5
+    end.
+
+  Definition preferred_site_obese : NeedleDecompSite := NDS_5thICS_AAL.
+  Definition preferred_site_standard : NeedleDecompSite := NDS_2ndICS_MCL.
+
+  Definition recommend_needle_site (bmi : nat) : NeedleDecompSite :=
+    if 30 <=? bmi then NDS_5thICS_AAL else NDS_2ndICS_MCL.
+
+  Theorem obese_patient_lateral :
+    recommend_needle_site 35 = NDS_5thICS_AAL.
+  Proof. reflexivity. Qed.
+
+  Definition albuterol_hyperkalemia_dose_mg : nat := 10.
+  Definition albuterol_hyperkalemia_dose_max_mg : nat := 20.
+  Definition albuterol_onset_min : nat := 15.
+  Definition albuterol_duration_min : nat := 120.
+  Definition albuterol_k_reduction_mEq_per_L_x10 : nat := 5.
+
+  Definition kayexalate_dose_g : nat := 30.
+  Definition kayexalate_onset_hr : nat := 2.
+  Definition kayexalate_not_for_arrest : bool := true.
+
+  Definition hemodialysis_k_clearance_mEq_per_hr : nat := 30.
+  Definition hemodialysis_indication_k_x10 : nat := 65.
+  Definition hemodialysis_urgent_k_x10 : nat := 70.
+
+  Record HyperkalemiaProtocol : Type := mkHyperKProtocol {
+    hkp_initial_k_x10 : nat;
+    hkp_calcium_given : bool;
+    hkp_calcium_time_sec : option nat;
+    hkp_insulin_dextrose_given : bool;
+    hkp_insulin_time_sec : option nat;
+    hkp_albuterol_given : bool;
+    hkp_albuterol_time_sec : option nat;
+    hkp_bicarb_given : bool;
+    hkp_dialysis_initiated : bool
+  }.
+
+  Definition hyperkalemia_next_intervention (hkp : HyperkalemiaProtocol) : TreatmentAction :=
+    if negb (hkp_calcium_given hkp) then TA_GiveCalcium calcium_chloride_dose_mg
+    else if negb (hkp_insulin_dextrose_given hkp) then TA_GiveInsulinDextrose
+    else if negb (hkp_albuterol_given hkp) then TA_NoActionNeeded
+    else if (hemodialysis_indication_k_x10 <=? hkp_initial_k_x10 hkp) && negb (hkp_dialysis_initiated hkp)
+    then TA_InitiateDialysis
+    else TA_NoActionNeeded.
+
+  Theorem severe_hyperkalemia_needs_dialysis :
+    hyperkalemia_next_intervention
+      (mkHyperKProtocol 72 true (Some 0) true (Some 60) true (Some 120) true false) = TA_InitiateDialysis.
+  Proof. reflexivity. Qed.
+
+  Inductive ToxinType : Type :=
+    | Tox_LocalAnesthetic
+    | Tox_BetaBlocker
+    | Tox_CalciumChannelBlocker
+    | Tox_TCA
+    | Tox_Opioid
+    | Tox_Digoxin
+    | Tox_Organophosphate
+    | Tox_Cyanide
+    | Tox_CarbonMonoxide
+    | Tox_Unknown.
+
+  Definition toxin_type_eq_dec : forall t1 t2 : ToxinType, {t1 = t2} + {t1 <> t2}.
+  Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
+
+  Inductive SpecificAntidote : Type :=
+    | Antidote_LipidEmulsion
+    | Antidote_Glucagon
+    | Antidote_HighDoseInsulin
+    | Antidote_SodiumBicarbonate
+    | Antidote_Naloxone
+    | Antidote_DigiFab
+    | Antidote_Atropine
+    | Antidote_Pralidoxime
+    | Antidote_HydroxocobalaminCyanokit
+    | Antidote_HighFlowO2
+    | Antidote_None.
+
+  Definition antidote_for_toxin (t : ToxinType) : SpecificAntidote :=
+    match t with
+    | Tox_LocalAnesthetic => Antidote_LipidEmulsion
+    | Tox_BetaBlocker => Antidote_Glucagon
+    | Tox_CalciumChannelBlocker => Antidote_HighDoseInsulin
+    | Tox_TCA => Antidote_SodiumBicarbonate
+    | Tox_Opioid => Antidote_Naloxone
+    | Tox_Digoxin => Antidote_DigiFab
+    | Tox_Organophosphate => Antidote_Atropine
+    | Tox_Cyanide => Antidote_HydroxocobalaminCyanokit
+    | Tox_CarbonMonoxide => Antidote_HighFlowO2
+    | Tox_Unknown => Antidote_LipidEmulsion
+    end.
+
+  Definition glucagon_bb_dose_mg : nat := 5.
+  Definition glucagon_bb_max_dose_mg : nat := 10.
+  Definition glucagon_bb_infusion_mg_per_hr : nat := 5.
+
+  Definition hdi_insulin_bolus_units_per_kg : nat := 1.
+  Definition hdi_insulin_infusion_units_per_kg_per_hr : nat := 1.
+  Definition hdi_dextrose_infusion_pct : nat := 10.
+
+  Definition naloxone_initial_dose_mg_x10 : nat := 4.
+  Definition naloxone_max_dose_mg : nat := 10.
+  Definition naloxone_infusion_mg_per_hr_x10 : nat := 4.
+
+  Definition digifab_vials_for_level (dig_level_ng_mL : nat) (weight_kg : nat) : nat :=
+    (dig_level_ng_mL * weight_kg) / 100.
+
+  Definition atropine_organophosphate_initial_mg : nat := 2.
+  Definition atropine_organophosphate_double_q5min : bool := true.
+  Definition pralidoxime_dose_mg : nat := 2000.
+
+  Definition hydroxocobalamin_dose_g : nat := 5.
+  Definition hydroxocobalamin_repeat_dose_g : nat := 5.
+
+  Theorem bupivacaine_gets_lipid :
+    antidote_for_toxin Tox_LocalAnesthetic = Antidote_LipidEmulsion.
+  Proof. reflexivity. Qed.
+
+  Theorem metoprolol_od_gets_glucagon :
+    antidote_for_toxin Tox_BetaBlocker = Antidote_Glucagon.
+  Proof. reflexivity. Qed.
+
+  Theorem diltiazem_od_gets_hdi :
+    antidote_for_toxin Tox_CalciumChannelBlocker = Antidote_HighDoseInsulin.
+  Proof. reflexivity. Qed.
+
+  Theorem tca_gets_bicarb :
+    antidote_for_toxin Tox_TCA = Antidote_SodiumBicarbonate.
+  Proof. reflexivity. Qed.
+
+  Theorem opioid_gets_naloxone :
+    antidote_for_toxin Tox_Opioid = Antidote_Naloxone.
+  Proof. reflexivity. Qed.
+
+  Definition tpa_pe_arrest_dose_mg : nat := 50.
+  Definition tpa_pe_arrest_bolus : bool := true.
+  Definition tpa_stemi_dose_mg : nat := 100.
+  Definition tpa_stemi_infusion_duration_min : nat := 90.
+  Definition tpa_max_dose_mg : nat := 100.
+
+  Definition tenecteplase_weight_based_dose_mg (weight_kg : nat) : nat :=
+    if weight_kg <? 60 then 30
+    else if weight_kg <? 70 then 35
+    else if weight_kg <? 80 then 40
+    else if weight_kg <? 90 then 45
+    else 50.
+
+  Definition fibrinolytic_contraindicated_absolute (recent_stroke_days : nat)
+    (active_bleeding : bool) (suspected_dissection : bool) : bool :=
+    (recent_stroke_days <? 90) || active_bleeding || suspected_dissection.
+
+  Definition fibrinolytic_contraindicated_relative (bp_systolic : nat)
+    (recent_surgery_days : nat) (on_anticoagulation : bool) : bool :=
+    (180 <? bp_systolic) || (recent_surgery_days <? 21) || on_anticoagulation.
+
+  Record FibrinolyticDecision : Type := mkFibDecision {
+    fib_indication : bool;
+    fib_pe_suspected : bool;
+    fib_stemi_suspected : bool;
+    fib_contraindications_absolute : bool;
+    fib_contraindications_relative : bool;
+    fib_weight_kg : nat
+  }.
+
+  Definition fibrinolytic_indicated (fd : FibrinolyticDecision) : bool :=
+    fib_indication fd &&
+    (fib_pe_suspected fd || fib_stemi_suspected fd) &&
+    negb (fib_contraindications_absolute fd).
+
+  Definition fibrinolytic_dose (fd : FibrinolyticDecision) : nat :=
+    if fib_pe_suspected fd then tpa_pe_arrest_dose_mg
+    else tpa_stemi_dose_mg.
+
+  Theorem pe_arrest_50mg :
+    fibrinolytic_dose (mkFibDecision true true false false false 70) = 50.
+  Proof. reflexivity. Qed.
+
+  Theorem stemi_100mg :
+    fibrinolytic_dose (mkFibDecision true false true false false 70) = 100.
+  Proof. reflexivity. Qed.
+
+  Theorem absolute_contraindication_blocks : forall fd,
+    fib_contraindications_absolute fd = true ->
+    fibrinolytic_indicated fd = false.
+  Proof.
+    intros fd H.
+    unfold fibrinolytic_indicated. rewrite H.
+    destruct (fib_indication fd); destruct (fib_pe_suspected fd || fib_stemi_suspected fd); reflexivity.
+  Qed.
+
 End ReversibleCauseTreatment.
 
 (******************************************************************************)
@@ -4312,6 +5062,131 @@ Module QTcTorsades.
     needs_urgent_intervention critical_qtc_assessment = true.
   Proof. reflexivity. Qed.
 
+  Definition magnesium_torsades_dose_g : nat := 2.
+  Definition magnesium_torsades_dose_mg : nat := 2000.
+  Definition magnesium_torsades_infusion_min_arrest : nat := 1.
+  Definition magnesium_torsades_infusion_max_min_stable : nat := 10.
+  Definition magnesium_torsades_dilution_volume_mL : nat := 10.
+
+  Record MagnesiumInfusion : Type := mkMgInfusion {
+    mgi_dose_mg : nat;
+    mgi_dilution_mL : nat;
+    mgi_rate_mL_per_min : nat;
+    mgi_duration_min : nat;
+    mgi_is_arrest : bool
+  }.
+
+  Definition magnesium_arrest_infusion : MagnesiumInfusion :=
+    mkMgInfusion 2000 10 10 1 true.
+
+  Definition magnesium_stable_infusion : MagnesiumInfusion :=
+    mkMgInfusion 2000 100 10 10 false.
+
+  Definition magnesium_rate_valid (mgi : MagnesiumInfusion) : bool :=
+    if mgi_is_arrest mgi then
+      mgi_duration_min mgi <=? 2
+    else
+      (2 <=? mgi_duration_min mgi) && (mgi_duration_min mgi <=? 10).
+
+  Theorem arrest_mg_rate_valid :
+    magnesium_rate_valid magnesium_arrest_infusion = true.
+  Proof. reflexivity. Qed.
+
+  Theorem stable_mg_rate_valid :
+    magnesium_rate_valid magnesium_stable_infusion = true.
+  Proof. reflexivity. Qed.
+
+  Definition overdrive_pacing_rate_min_bpm : nat := 100.
+  Definition overdrive_pacing_rate_max_bpm : nat := 120.
+  Definition overdrive_pacing_target_bpm : nat := 110.
+  Definition overdrive_pacing_output_mA_initial : nat := 20.
+
+  Record OverdrivePacingParams : Type := mkOverdrivePacing {
+    odp_rate_bpm : nat;
+    odp_output_mA : nat;
+    odp_capture_confirmed : bool;
+    odp_underlying_rate_bpm : nat
+  }.
+
+  Definition overdrive_rate_adequate (p : OverdrivePacingParams) : bool :=
+    (overdrive_pacing_rate_min_bpm <=? odp_rate_bpm p) &&
+    (odp_rate_bpm p <=? overdrive_pacing_rate_max_bpm) &&
+    (odp_underlying_rate_bpm p <? odp_rate_bpm p).
+
+  Definition overdrive_pacing_effective (p : OverdrivePacingParams) : bool :=
+    odp_capture_confirmed p && overdrive_rate_adequate p.
+
+  Definition standard_overdrive_pacing : OverdrivePacingParams :=
+    mkOverdrivePacing 110 20 true 45.
+
+  Definition ineffective_overdrive : OverdrivePacingParams :=
+    mkOverdrivePacing 80 20 true 75.
+
+  Theorem standard_overdrive_effective :
+    overdrive_pacing_effective standard_overdrive_pacing = true.
+  Proof. reflexivity. Qed.
+
+  Theorem slow_overdrive_ineffective :
+    overdrive_pacing_effective ineffective_overdrive = false.
+  Proof. reflexivity. Qed.
+
+  Definition isoproterenol_initial_rate_mcg_per_min : nat := 2.
+  Definition isoproterenol_max_rate_mcg_per_min : nat := 10.
+  Definition isoproterenol_titration_increment_mcg : nat := 1.
+  Definition isoproterenol_target_hr_bpm : nat := 100.
+
+  Record IsoproterenolInfusion : Type := mkIsoInfusion {
+    iso_rate_mcg_per_min : nat;
+    iso_current_hr_bpm : nat;
+    iso_target_hr_bpm : nat;
+    iso_torsades_suppressed : bool
+  }.
+
+  Definition isoproterenol_rate_valid (iso : IsoproterenolInfusion) : bool :=
+    (isoproterenol_initial_rate_mcg_per_min <=? iso_rate_mcg_per_min iso) &&
+    (iso_rate_mcg_per_min iso <=? isoproterenol_max_rate_mcg_per_min).
+
+  Definition isoproterenol_at_target (iso : IsoproterenolInfusion) : bool :=
+    iso_target_hr_bpm iso <=? iso_current_hr_bpm iso.
+
+  Definition isoproterenol_effective (iso : IsoproterenolInfusion) : bool :=
+    iso_torsades_suppressed iso && isoproterenol_at_target iso.
+
+  Definition should_titrate_isoproterenol (iso : IsoproterenolInfusion) : bool :=
+    negb (isoproterenol_at_target iso) &&
+    negb (iso_torsades_suppressed iso) &&
+    (iso_rate_mcg_per_min iso <? isoproterenol_max_rate_mcg_per_min).
+
+  Definition titrate_isoproterenol (iso : IsoproterenolInfusion) : IsoproterenolInfusion :=
+    mkIsoInfusion
+      (Nat.min (iso_rate_mcg_per_min iso + isoproterenol_titration_increment_mcg)
+               isoproterenol_max_rate_mcg_per_min)
+      (iso_current_hr_bpm iso)
+      (iso_target_hr_bpm iso)
+      (iso_torsades_suppressed iso).
+
+  Definition initial_isoproterenol : IsoproterenolInfusion :=
+    mkIsoInfusion 2 45 100 false.
+
+  Definition effective_isoproterenol : IsoproterenolInfusion :=
+    mkIsoInfusion 5 105 100 true.
+
+  Theorem initial_iso_should_titrate :
+    should_titrate_isoproterenol initial_isoproterenol = true.
+  Proof. reflexivity. Qed.
+
+  Theorem effective_iso_no_titrate :
+    should_titrate_isoproterenol effective_isoproterenol = false.
+  Proof. reflexivity. Qed.
+
+  Theorem effective_iso_effective :
+    isoproterenol_effective effective_isoproterenol = true.
+  Proof. reflexivity. Qed.
+
+  Theorem titrate_increases_rate :
+    iso_rate_mcg_per_min (titrate_isoproterenol initial_isoproterenol) = 3.
+  Proof. reflexivity. Qed.
+
 End QTcTorsades.
 
 (******************************************************************************)
@@ -4483,6 +5358,171 @@ Module HypothermicArrest.
 
   Theorem normal_K_not_futile :
     futility_likely submersion_victim 45 = false.
+  Proof. reflexivity. Qed.
+
+  Inductive RewarmingMethod : Type :=
+    | RM_PassiveExternal
+    | RM_ActiveExternalBlanket
+    | RM_WarmIVFluids
+    | RM_HeatedHumidifiedO2
+    | RM_BodyCavityLavage
+    | RM_Hemodialysis
+    | RM_ECMO.
+
+  Definition rewarming_method_eq_dec
+    : forall r1 r2 : RewarmingMethod, {r1 = r2} + {r1 <> r2}.
+  Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
+
+  Definition rewarming_rate_per_hr_x10 (rm : RewarmingMethod) : nat :=
+    match rm with
+    | RM_PassiveExternal => 5
+    | RM_ActiveExternalBlanket => 20
+    | RM_WarmIVFluids => 10
+    | RM_HeatedHumidifiedO2 => 10
+    | RM_BodyCavityLavage => 30
+    | RM_Hemodialysis => 30
+    | RM_ECMO => 90
+    end.
+
+  Definition warm_iv_fluid_temp_C : nat := 42.
+  Definition warm_iv_fluid_max_temp_C : nat := 43.
+  Definition heated_o2_temp_C : nat := 42.
+  Definition lavage_fluid_temp_C : nat := 42.
+
+  Inductive LavageSite : Type :=
+    | Lavage_Peritoneal
+    | Lavage_Thoracic
+    | Lavage_Bladder.
+
+  Definition lavage_site_eq_dec : forall l1 l2 : LavageSite, {l1 = l2} + {l1 <> l2}.
+  Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
+
+  Definition lavage_volume_mL (site : LavageSite) : nat :=
+    match site with
+    | Lavage_Peritoneal => 1000
+    | Lavage_Thoracic => 500
+    | Lavage_Bladder => 300
+    end.
+
+  Definition lavage_dwell_time_min (site : LavageSite) : nat :=
+    match site with
+    | Lavage_Peritoneal => 20
+    | Lavage_Thoracic => 10
+    | Lavage_Bladder => 10
+    end.
+
+  Record RewarmingProtocol : Type := mkRewarmProtocol {
+    rp_methods : list RewarmingMethod;
+    rp_target_temp_x10 : nat;
+    rp_current_temp_x10 : nat;
+    rp_elapsed_min : nat;
+    rp_k_x10 : nat
+  }.
+
+  Definition rewarming_method_for_grade (g : HypothermiaGrade) : list RewarmingMethod :=
+    match g with
+    | SevereHypothermia => [RM_ECMO; RM_BodyCavityLavage; RM_Hemodialysis]
+    | ModerateHypothermia => [RM_ActiveExternalBlanket; RM_WarmIVFluids; RM_HeatedHumidifiedO2]
+    | MildHypothermia => [RM_ActiveExternalBlanket; RM_PassiveExternal]
+    | Normothermic => []
+    end.
+
+  Definition ecmo_indicated_for_rewarming (rp : RewarmingProtocol) : bool :=
+    (rp_current_temp_x10 rp <? core_temp_severe_hypothermia_x10) &&
+    negb (futility_likely (mkHypoPatient (rp_current_temp_x10 rp) 0 false false true) (rp_k_x10 rp)).
+
+  Theorem severe_hypothermia_needs_ecmo :
+    ecmo_indicated_for_rewarming (mkRewarmProtocol [] 370 280 0 50) = true.
+  Proof. reflexivity. Qed.
+
+  Theorem high_k_no_ecmo :
+    ecmo_indicated_for_rewarming (mkRewarmProtocol [] 370 280 0 130) = false.
+  Proof. reflexivity. Qed.
+
+  Definition hypo_extended_epi_interval_min_min : nat := 6.
+  Definition hypo_extended_epi_interval_max_min : nat := 10.
+  Definition hypo_normal_epi_interval_min_min : nat := 3.
+  Definition hypo_normal_epi_interval_max_min : nat := 5.
+
+  Record HypothermicMedTiming : Type := mkHypoMedTiming {
+    hmt_grade : HypothermiaGrade;
+    hmt_last_epi_time_sec : option nat;
+    hmt_epi_doses_given : nat;
+    hmt_core_temp_x10 : nat
+  }.
+
+  Definition epi_interval_for_grade (g : HypothermiaGrade) : nat * nat :=
+    if epi_interval_extended g then (hypo_extended_epi_interval_min_min * 60, hypo_extended_epi_interval_max_min * 60)
+    else (hypo_normal_epi_interval_min_min * 60, hypo_normal_epi_interval_max_min * 60).
+
+  Definition epi_due_hypothermic (hmt : HypothermicMedTiming) (current_time_sec : nat) : bool :=
+    meds_allowed (hmt_grade hmt) &&
+    match hmt_last_epi_time_sec hmt with
+    | None => true
+    | Some last =>
+        let (min_interval, _) := epi_interval_for_grade (hmt_grade hmt) in
+        min_interval <=? (current_time_sec - last)
+    end.
+
+  Definition epi_timing_compliant_hypothermic (hmt : HypothermicMedTiming) (current_time_sec : nat) : bool :=
+    match hmt_last_epi_time_sec hmt with
+    | None => true
+    | Some last =>
+        let (min_interval, max_interval) := epi_interval_for_grade (hmt_grade hmt) in
+        let elapsed := current_time_sec - last in
+        (min_interval <=? elapsed) && (elapsed <=? max_interval)
+    end.
+
+  Definition sample_moderate_hypothermic : HypothermicMedTiming :=
+    mkHypoMedTiming ModerateHypothermia (Some 0) 1 320.
+
+  Definition sample_severe_hypothermic : HypothermicMedTiming :=
+    mkHypoMedTiming SevereHypothermia (Some 0) 0 280.
+
+  Theorem moderate_epi_due_at_6min :
+    epi_due_hypothermic sample_moderate_hypothermic 360 = true.
+  Proof. reflexivity. Qed.
+
+  Theorem moderate_epi_not_due_at_3min :
+    epi_due_hypothermic sample_moderate_hypothermic 180 = false.
+  Proof. reflexivity. Qed.
+
+  Theorem severe_no_epi :
+    epi_due_hypothermic sample_severe_hypothermic 600 = false.
+  Proof. reflexivity. Qed.
+
+  Record HypothermicTerminationCriteria : Type := mkHypoTermCriteria {
+    htc_k_x10 : nat;
+    htc_core_temp_x10 : nat;
+    htc_asystole_duration_min : nat;
+    htc_witnessed_arrest : bool;
+    htc_ecmo_available : bool
+  }.
+
+  Definition hypothermic_termination_indicated (htc : HypothermicTerminationCriteria) : bool :=
+    futility_likely (mkHypoPatient (htc_core_temp_x10 htc) 0 false false true) (htc_k_x10 htc) ||
+    ((20 <=? htc_asystole_duration_min htc) &&
+     negb (htc_witnessed_arrest htc) &&
+     negb (htc_ecmo_available htc)).
+
+  Definition hypothermic_continue_indicated (htc : HypothermicTerminationCriteria) : bool :=
+    negb (hypothermic_termination_indicated htc) &&
+    (htc_core_temp_x10 htc <? 320).
+
+  Theorem high_k_terminate :
+    hypothermic_termination_indicated (mkHypoTermCriteria 130 280 30 false false) = true.
+  Proof. reflexivity. Qed.
+
+  Theorem witnessed_with_ecmo_continue :
+    hypothermic_continue_indicated (mkHypoTermCriteria 50 280 30 true true) = true.
+  Proof. reflexivity. Qed.
+
+  Theorem ecmo_rewarming_rate :
+    rewarming_rate_per_hr_x10 RM_ECMO = 90.
+  Proof. reflexivity. Qed.
+
+  Theorem hemodialysis_rewarming_rate :
+    rewarming_rate_per_hr_x10 RM_Hemodialysis = 30.
   Proof. reflexivity. Qed.
 
 End HypothermicArrest.
@@ -4823,6 +5863,126 @@ Module PregnancyArrest.
 
   Definition two_patient_resuscitation : bool := true.
 
+  Definition lud_angle_min_degrees : nat := 15.
+  Definition lud_angle_max_degrees : nat := 30.
+  Definition lud_optimal_angle_degrees : nat := 27.
+
+  Inductive LUDMethod : Type :=
+    | LUD_ManualDisplacement
+    | LUD_LeftLateralTilt
+    | LUD_Wedge
+    | LUD_Cardiff.
+
+  Definition lud_method_eq_dec : forall m1 m2 : LUDMethod, {m1 = m2} + {m1 <> m2}.
+  Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
+
+  Definition lud_angle_adequate (angle_degrees : nat) : bool :=
+    (lud_angle_min_degrees <=? angle_degrees) && (angle_degrees <=? lud_angle_max_degrees).
+
+  Definition lud_compromises_cpr (method : LUDMethod) (angle_degrees : nat) : bool :=
+    match method with
+    | LUD_ManualDisplacement => false
+    | LUD_LeftLateralTilt => 30 <? angle_degrees
+    | LUD_Wedge => 30 <? angle_degrees
+    | LUD_Cardiff => false
+    end.
+
+  Theorem angle_27_adequate :
+    lud_angle_adequate 27 = true.
+  Proof. reflexivity. Qed.
+
+  Theorem angle_10_inadequate :
+    lud_angle_adequate 10 = false.
+  Proof. reflexivity. Qed.
+
+  Definition fundal_height_to_ga_weeks (fundal_cm : nat) : nat :=
+    if fundal_cm <? 12 then 12
+    else if fundal_cm <? 16 then 16
+    else if fundal_cm <? 20 then 20
+    else if fundal_cm <? 24 then fundal_cm
+    else if fundal_cm <? 36 then fundal_cm
+    else 40.
+
+  Definition fundal_above_umbilicus_suggests_viable (fundal_above_umbilicus : bool) : bool :=
+    fundal_above_umbilicus.
+
+  Definition estimated_ga_viable (fundal_cm : nat) : bool :=
+    viable_gestational_age_weeks <=? fundal_height_to_ga_weeks fundal_cm.
+
+  Theorem fundal_11_not_viable :
+    estimated_ga_viable 11 = false.
+  Proof. reflexivity. Qed.
+
+  Theorem fundal_20_viable :
+    estimated_ga_viable 20 = true.
+  Proof. reflexivity. Qed.
+
+  Theorem fundal_24_viable :
+    estimated_ga_viable 24 = true.
+  Proof. reflexivity. Qed.
+
+  Theorem fundal_36_viable :
+    estimated_ga_viable 36 = true.
+  Proof. reflexivity. Qed.
+
+  Inductive SurgicalTeamActivation : Type :=
+    | STA_NotNeeded
+    | STA_Standby
+    | STA_Activated
+    | STA_InRoom.
+
+  Definition surgical_team_activation_eq_dec
+    : forall s1 s2 : SurgicalTeamActivation, {s1 = s2} + {s1 <> s2}.
+  Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
+
+  Definition surgical_activation_threshold_min : nat := 3.
+  Definition surgical_activation_urgent_min : nat := 4.
+
+  Record SurgicalActivationState : Type := mkSurgicalActivation {
+    sa_current_status : SurgicalTeamActivation;
+    sa_activation_time_min : option nat;
+    sa_team_eta_min : option nat;
+    sa_or_available : bool
+  }.
+
+  Definition recommend_surgical_activation (arrest_time_min : nat) (ga_weeks : nat) (rosc : bool) : SurgicalTeamActivation :=
+    if rosc then STA_NotNeeded
+    else if ga_weeks <? viable_gestational_age_weeks then STA_NotNeeded
+    else if arrest_time_min <? surgical_activation_threshold_min then STA_Standby
+    else if arrest_time_min <? surgical_activation_urgent_min then STA_Activated
+    else STA_InRoom.
+
+  Definition surgical_team_ready (sa : SurgicalActivationState) : bool :=
+    match sa_current_status sa with
+    | STA_InRoom => true
+    | _ => false
+    end.
+
+  Definition cd_can_proceed (sa : SurgicalActivationState) (arrest_time_min : nat) : bool :=
+    surgical_team_ready sa &&
+    (perimortem_cd_target_min <=? arrest_time_min) &&
+    sa_or_available sa.
+
+  Theorem early_standby :
+    recommend_surgical_activation 2 28 false = STA_Standby.
+  Proof. reflexivity. Qed.
+
+  Theorem at_3min_activated :
+    recommend_surgical_activation 3 28 false = STA_Activated.
+  Proof. reflexivity. Qed.
+
+  Theorem at_4min_in_room :
+    recommend_surgical_activation 4 28 false = STA_InRoom.
+  Proof. reflexivity. Qed.
+
+  Theorem previable_no_surgical :
+    recommend_surgical_activation 5 19 false = STA_NotNeeded.
+  Proof. reflexivity. Qed.
+
+  Theorem rosc_cancels_surgical :
+    recommend_surgical_activation 4 28 true = STA_NotNeeded.
+  Proof. reflexivity. Qed.
+
 End PregnancyArrest.
 
 (******************************************************************************)
@@ -5093,6 +6253,221 @@ Module Defibrillation.
   Theorem Asystole_shock_never_appropriate : forall sp,
     shock_appropriate Rhythm.Asystole sp = false.
   Proof. intros sp. reflexivity. Qed.
+
+  Inductive BiphasicWaveform : Type :=
+    | BTE
+    | RLB
+    | PulsedBiphasic.
+
+  Definition biphasic_waveform_eq_dec
+    : forall w1 w2 : BiphasicWaveform, {w1 = w2} + {w1 <> w2}.
+  Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
+
+  Definition waveform_optimal_energy (wf : BiphasicWaveform) : nat :=
+    match wf with
+    | BTE => 150
+    | RLB => 120
+    | PulsedBiphasic => 200
+    end.
+
+  Definition waveform_max_energy (wf : BiphasicWaveform) : nat :=
+    match wf with
+    | BTE => 360
+    | RLB => 200
+    | PulsedBiphasic => 360
+    end.
+
+  Record DefibrillatorConfig : Type := mkDefibConfig {
+    dc_type : DefibrillatorType;
+    dc_waveform : option BiphasicWaveform;
+    dc_max_energy_J : nat;
+    dc_impedance_compensating : bool
+  }.
+
+  Definition standard_biphasic_BTE : DefibrillatorConfig :=
+    mkDefibConfig Biphasic (Some BTE) 360 true.
+
+  Definition standard_biphasic_RLB : DefibrillatorConfig :=
+    mkDefibConfig Biphasic (Some RLB) 200 true.
+
+  Definition standard_monophasic_config : DefibrillatorConfig :=
+    mkDefibConfig Monophasic None 360 false.
+
+  Inductive PadPosition : Type :=
+    | Anterolateral
+    | Anteroposterior
+    | AnteriorLeftInfrascapular
+    | AnteriorRightInfrascapular.
+
+  Definition pad_position_eq_dec
+    : forall p1 p2 : PadPosition, {p1 = p2} + {p1 <> p2}.
+  Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
+
+  Definition alternate_pad_position (current : PadPosition) : PadPosition :=
+    match current with
+    | Anterolateral => Anteroposterior
+    | Anteroposterior => Anterolateral
+    | AnteriorLeftInfrascapular => AnteriorRightInfrascapular
+    | AnteriorRightInfrascapular => AnteriorLeftInfrascapular
+    end.
+
+  Definition impedance_normal_range_min_ohms : nat := 25.
+  Definition impedance_normal_range_max_ohms : nat := 175.
+  Definition impedance_high_threshold_ohms : nat := 125.
+
+  Record ImpedanceReading : Type := mkImpedance {
+    measured_ohms : nat;
+    good_contact : bool;
+    measurement_time_sec : nat
+  }.
+
+  Definition impedance_in_normal_range (ir : ImpedanceReading) : bool :=
+    (impedance_normal_range_min_ohms <=? measured_ohms ir) &&
+    (measured_ohms ir <=? impedance_normal_range_max_ohms).
+
+  Definition impedance_high (ir : ImpedanceReading) : bool :=
+    impedance_high_threshold_ohms <=? measured_ohms ir.
+
+  Definition impedance_suggests_poor_contact (ir : ImpedanceReading) : bool :=
+    (measured_ohms ir <? impedance_normal_range_min_ohms) ||
+    (impedance_normal_range_max_ohms <? measured_ohms ir) ||
+    negb (good_contact ir).
+
+  Inductive ImpedanceAction : Type :=
+    | IA_ProceedWithShock
+    | IA_CheckPadContact
+    | IA_ReplacePads
+    | IA_ChangePadPosition
+    | IA_RemoveExcessHair
+    | IA_DryChest.
+
+  Definition recommend_impedance_action (ir : ImpedanceReading) : ImpedanceAction :=
+    if negb (good_contact ir) then IA_CheckPadContact
+    else if measured_ohms ir <? impedance_normal_range_min_ohms then IA_ReplacePads
+    else if impedance_normal_range_max_ohms <? measured_ohms ir then IA_RemoveExcessHair
+    else if impedance_high ir then IA_ChangePadPosition
+    else IA_ProceedWithShock.
+
+  Definition normal_impedance : ImpedanceReading := mkImpedance 70 true 0.
+  Definition high_impedance : ImpedanceReading := mkImpedance 150 true 0.
+  Definition poor_contact_impedance : ImpedanceReading := mkImpedance 200 false 0.
+
+  Theorem normal_impedance_proceed :
+    recommend_impedance_action normal_impedance = IA_ProceedWithShock.
+  Proof. reflexivity. Qed.
+
+  Theorem high_impedance_change_position :
+    recommend_impedance_action high_impedance = IA_ChangePadPosition.
+  Proof. reflexivity. Qed.
+
+  Theorem poor_contact_check :
+    recommend_impedance_action poor_contact_impedance = IA_CheckPadContact.
+  Proof. reflexivity. Qed.
+
+  Definition refractory_vf_shock_threshold : nat := 3.
+
+  Inductive DSEStrategy : Type :=
+    | DSE_NotIndicated
+    | DSE_Sequential
+    | DSE_NearSimultaneous.
+
+  Definition dse_strategy_eq_dec
+    : forall s1 s2 : DSEStrategy, {s1 = s2} + {s1 <> s2}.
+  Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
+
+  Record DSEConfig : Type := mkDSEConfig {
+    dse_defib1_energy_J : nat;
+    dse_defib2_energy_J : nat;
+    dse_defib1_position : PadPosition;
+    dse_defib2_position : PadPosition;
+    dse_delay_ms : nat
+  }.
+
+  Definition standard_dse_config : DSEConfig :=
+    mkDSEConfig 200 200 Anterolateral Anteroposterior 50.
+
+  Definition dse_indicated (shock_count : nat) (still_vf : bool) : bool :=
+    still_vf && (refractory_vf_shock_threshold <=? shock_count).
+
+  Definition dse_positions_orthogonal (cfg : DSEConfig) : bool :=
+    match dse_defib1_position cfg, dse_defib2_position cfg with
+    | Anterolateral, Anteroposterior => true
+    | Anteroposterior, Anterolateral => true
+    | AnteriorLeftInfrascapular, AnteriorRightInfrascapular => true
+    | AnteriorRightInfrascapular, AnteriorLeftInfrascapular => true
+    | _, _ => false
+    end.
+
+  Definition dse_timing_valid (cfg : DSEConfig) : bool :=
+    dse_delay_ms cfg <=? 100.
+
+  Definition dse_config_valid (cfg : DSEConfig) : bool :=
+    dse_positions_orthogonal cfg &&
+    dse_timing_valid cfg &&
+    (120 <=? dse_defib1_energy_J cfg) &&
+    (120 <=? dse_defib2_energy_J cfg).
+
+  Theorem standard_dse_valid :
+    dse_config_valid standard_dse_config = true.
+  Proof. reflexivity. Qed.
+
+  Theorem dse_after_3_shocks :
+    dse_indicated 3 true = true.
+  Proof. reflexivity. Qed.
+
+  Theorem dse_not_if_converted :
+    dse_indicated 5 false = false.
+  Proof. reflexivity. Qed.
+
+  Theorem dse_not_before_3_shocks :
+    dse_indicated 2 true = false.
+  Proof. reflexivity. Qed.
+
+  Definition vector_change_indicated (shock_count : nat) (still_shockable : bool) : bool :=
+    still_shockable && (2 <=? shock_count).
+
+  Record VectorChangeState : Type := mkVectorChange {
+    vc_current_position : PadPosition;
+    vc_positions_tried : list PadPosition;
+    vc_shocks_at_current : nat
+  }.
+
+  Definition initial_vector_state : VectorChangeState :=
+    mkVectorChange Anterolateral [Anterolateral] 0.
+
+  Definition should_change_vector (vs : VectorChangeState) : bool :=
+    2 <=? vc_shocks_at_current vs.
+
+  Definition change_vector (vs : VectorChangeState) : VectorChangeState :=
+    let new_pos := alternate_pad_position (vc_current_position vs) in
+    mkVectorChange new_pos (vc_positions_tried vs ++ [new_pos]) 0.
+
+  Definition record_shock_at_vector (vs : VectorChangeState) : VectorChangeState :=
+    mkVectorChange
+      (vc_current_position vs)
+      (vc_positions_tried vs)
+      (S (vc_shocks_at_current vs)).
+
+  Theorem vector_change_after_2_shocks :
+    should_change_vector (mkVectorChange Anterolateral [Anterolateral] 2) = true.
+  Proof. reflexivity. Qed.
+
+  Theorem vector_no_change_after_1_shock :
+    should_change_vector (mkVectorChange Anterolateral [Anterolateral] 1) = false.
+  Proof. reflexivity. Qed.
+
+  Definition total_energy_delivered (shocks : list nat) : nat :=
+    fold_left Nat.add shocks 0.
+
+  Definition average_shock_energy (shocks : list nat) : nat :=
+    match shocks with
+    | [] => 0
+    | _ => total_energy_delivered shocks / length shocks
+    end.
+
+  Theorem total_energy_3_shocks :
+    total_energy_delivered [200; 200; 360] = 760.
+  Proof. reflexivity. Qed.
 
 End Defibrillation.
 
@@ -5707,6 +7082,141 @@ Module TimeSemantics.
            Medication.epinephrine_interval_max.
     simpl. lia.
   Qed.
+
+  Definition shock_to_cpr_max_delay_sec : nat := 10.
+  Definition pre_shock_pause_max_sec : nat := 10.
+  Definition post_shock_pause_target_sec : nat := 0.
+
+  Record ShockCPRTiming : Type := mkShockCPRTiming {
+    sct_last_shock_time_sec : option nat;
+    sct_cpr_resume_time_sec : option nat;
+    sct_pre_shock_pause_sec : nat;
+    sct_post_shock_pause_sec : nat;
+    sct_total_perishock_pause_sec : nat;
+    sct_shock_count_timing : nat
+  }.
+
+  Definition initial_shock_cpr_timing : ShockCPRTiming :=
+    mkShockCPRTiming None None 0 0 0 0.
+
+  Definition record_shock (sct : ShockCPRTiming) (shock_time_sec : nat) (pre_pause_sec : nat) : ShockCPRTiming :=
+    mkShockCPRTiming
+      (Some shock_time_sec)
+      None
+      pre_pause_sec
+      0
+      (sct_total_perishock_pause_sec sct + pre_pause_sec)
+      (S (sct_shock_count_timing sct)).
+
+  Definition record_cpr_resume (sct : ShockCPRTiming) (resume_time_sec : nat) : ShockCPRTiming :=
+    match sct_last_shock_time_sec sct with
+    | None => sct
+    | Some shock_time =>
+        let post_pause := resume_time_sec - shock_time in
+        mkShockCPRTiming
+          (sct_last_shock_time_sec sct)
+          (Some resume_time_sec)
+          (sct_pre_shock_pause_sec sct)
+          post_pause
+          (sct_total_perishock_pause_sec sct + post_pause)
+          (sct_shock_count_timing sct)
+    end.
+
+  Definition shock_to_cpr_compliant (sct : ShockCPRTiming) : bool :=
+    sct_post_shock_pause_sec sct <=? shock_to_cpr_max_delay_sec.
+
+  Definition pre_shock_pause_compliant (sct : ShockCPRTiming) : bool :=
+    sct_pre_shock_pause_sec sct <=? pre_shock_pause_max_sec.
+
+  Definition perishock_timing_compliant (sct : ShockCPRTiming) : bool :=
+    shock_to_cpr_compliant sct && pre_shock_pause_compliant sct.
+
+  Definition average_perishock_pause_sec (sct : ShockCPRTiming) : nat :=
+    if sct_shock_count_timing sct =? 0 then 0
+    else sct_total_perishock_pause_sec sct / sct_shock_count_timing sct.
+
+  Theorem good_perishock_compliant :
+    perishock_timing_compliant (mkShockCPRTiming (Some 100) (Some 105) 5 5 10 1) = true.
+  Proof. reflexivity. Qed.
+
+  Theorem long_post_shock_not_compliant :
+    shock_to_cpr_compliant (mkShockCPRTiming (Some 100) (Some 115) 3 15 18 1) = false.
+  Proof. reflexivity. Qed.
+
+  Record HandsOffAccumulator : Type := mkHandsOff {
+    ho_total_pause_sec : nat;
+    ho_total_elapsed_sec : nat;
+    ho_longest_pause_sec : nat;
+    ho_pause_events : nat;
+    ho_currently_paused : bool;
+    ho_current_pause_start_sec : option nat
+  }.
+
+  Definition initial_hands_off : HandsOffAccumulator :=
+    mkHandsOff 0 0 0 0 false None.
+
+  Definition start_hands_off (ho : HandsOffAccumulator) (at_sec : nat) : HandsOffAccumulator :=
+    mkHandsOff
+      (ho_total_pause_sec ho)
+      (ho_total_elapsed_sec ho)
+      (ho_longest_pause_sec ho)
+      (ho_pause_events ho)
+      true
+      (Some at_sec).
+
+  Definition end_hands_off (ho : HandsOffAccumulator) (at_sec : nat) : HandsOffAccumulator :=
+    match ho_current_pause_start_sec ho with
+    | None => ho
+    | Some start =>
+        let pause_duration := at_sec - start in
+        mkHandsOff
+          (ho_total_pause_sec ho + pause_duration)
+          (ho_total_elapsed_sec ho + pause_duration)
+          (Nat.max (ho_longest_pause_sec ho) pause_duration)
+          (S (ho_pause_events ho))
+          false
+          None
+    end.
+
+  Definition add_compression_time_ho (ho : HandsOffAccumulator) (duration_sec : nat) : HandsOffAccumulator :=
+    mkHandsOff
+      (ho_total_pause_sec ho)
+      (ho_total_elapsed_sec ho + duration_sec)
+      (ho_longest_pause_sec ho)
+      (ho_pause_events ho)
+      (ho_currently_paused ho)
+      (ho_current_pause_start_sec ho).
+
+  Definition hands_off_fraction_pct (ho : HandsOffAccumulator) : nat :=
+    if ho_total_elapsed_sec ho =? 0 then 0
+    else (ho_total_pause_sec ho * 100) / ho_total_elapsed_sec ho.
+
+  Definition hands_off_acceptable_pct : nat := 40.
+
+  Definition hands_off_compliant (ho : HandsOffAccumulator) : bool :=
+    hands_off_fraction_pct ho <=? hands_off_acceptable_pct.
+
+  Definition sample_good_hands_off : HandsOffAccumulator :=
+    mkHandsOff 20 100 8 3 false None.
+
+  Definition sample_poor_hands_off : HandsOffAccumulator :=
+    mkHandsOff 60 100 20 5 false None.
+
+  Theorem good_hands_off_compliant :
+    hands_off_compliant sample_good_hands_off = true.
+  Proof. reflexivity. Qed.
+
+  Theorem poor_hands_off_not_compliant :
+    hands_off_compliant sample_poor_hands_off = false.
+  Proof. reflexivity. Qed.
+
+  Theorem good_hands_off_pct :
+    hands_off_fraction_pct sample_good_hands_off = 20.
+  Proof. reflexivity. Qed.
+
+  Theorem poor_hands_off_pct :
+    hands_off_fraction_pct sample_poor_hands_off = 60.
+  Proof. reflexivity. Qed.
 
 End TimeSemantics.
 
@@ -6368,6 +7878,145 @@ Module TerminationOfResuscitation.
     rewrite H. reflexivity.
   Qed.
 
+  Record ETCO2Trajectory : Type := mkETCO2Traj {
+    etco2_readings_mmHg : list nat;
+    etco2_times_min : list nat;
+    etco2_lowest_mmHg : nat;
+    etco2_highest_mmHg : nat;
+    etco2_trend_direction : nat
+  }.
+
+  Definition tor_etco2_futility_threshold_mmHg : nat := 10.
+  Definition tor_etco2_trending_threshold_mmHg : nat := 20.
+  Definition tor_etco2_trajectory_window_min : nat := 20.
+
+  Definition etco2_persistently_low (traj : ETCO2Trajectory) : bool :=
+    etco2_highest_mmHg traj <? tor_etco2_futility_threshold_mmHg.
+
+  Definition etco2_improving (traj : ETCO2Trajectory) : bool :=
+    match etco2_readings_mmHg traj with
+    | [] => false
+    | [_] => false
+    | first :: rest =>
+        match last rest first with
+        | latest => first <? latest
+        end
+    end.
+
+  Definition etco2_supports_continued_resus (traj : ETCO2Trajectory) : bool :=
+    (tor_etco2_futility_threshold_mmHg <=? etco2_highest_mmHg traj) ||
+    etco2_improving traj.
+
+  Theorem persistently_low_etco2_futility :
+    etco2_persistently_low (mkETCO2Traj [5; 6; 5; 7] [0; 5; 10; 15] 5 7 0) = true.
+  Proof. reflexivity. Qed.
+
+  Theorem adequate_etco2_continue :
+    etco2_supports_continued_resus (mkETCO2Traj [10; 12; 15] [0; 5; 10] 10 15 1) = true.
+  Proof. reflexivity. Qed.
+
+  Definition lactate_futility_threshold_mmol_L_x10 : nat := 150.
+  Definition lactate_clearance_target_pct_per_hr : nat := 10.
+
+  Record LactateTrajectory : Type := mkLactateTraj {
+    lactate_readings_x10 : list nat;
+    lactate_times_hr : list nat;
+    lactate_initial_x10 : nat;
+    lactate_latest_x10 : nat
+  }.
+
+  Definition lactate_clearance_pct (traj : LactateTrajectory) : nat :=
+    if lactate_initial_x10 traj =? 0 then 0
+    else ((lactate_initial_x10 traj - lactate_latest_x10 traj) * 100) / lactate_initial_x10 traj.
+
+  Definition lactate_improving (traj : LactateTrajectory) : bool :=
+    lactate_latest_x10 traj <? lactate_initial_x10 traj.
+
+  Definition lactate_extremely_elevated (traj : LactateTrajectory) : bool :=
+    lactate_futility_threshold_mmol_L_x10 <=? lactate_latest_x10 traj.
+
+  Theorem lactate_clearance_calculation :
+    lactate_clearance_pct (mkLactateTraj [100; 80; 60] [0; 2; 4] 100 60) = 40.
+  Proof. reflexivity. Qed.
+
+  Theorem high_lactate_poor_prognosis :
+    lactate_extremely_elevated (mkLactateTraj [200] [0] 200 200) = true.
+  Proof. reflexivity. Qed.
+
+  Definition ph_severe_acidosis_threshold_x100 : nat := 680.
+  Definition ph_moderate_acidosis_threshold_x100 : nat := 710.
+
+  Record pHTrajectory : Type := mkpHTraj {
+    ph_readings_x100 : list nat;
+    ph_times_min : list nat;
+    ph_lowest_x100 : nat;
+    ph_latest_x100 : nat
+  }.
+
+  Definition ph_improving (traj : pHTrajectory) : bool :=
+    ph_lowest_x100 traj <? ph_latest_x100 traj.
+
+  Definition ph_severely_acidotic (traj : pHTrajectory) : bool :=
+    ph_latest_x100 traj <? ph_severe_acidosis_threshold_x100.
+
+  Definition ph_persistent_severe_acidosis (traj : pHTrajectory) : bool :=
+    ph_severely_acidotic traj && negb (ph_improving traj).
+
+  Theorem ph_improving_detected :
+    ph_improving (mkpHTraj [680; 690; 710] [0; 10; 20] 680 710) = true.
+  Proof. reflexivity. Qed.
+
+  Theorem persistent_acidosis_detected :
+    ph_persistent_severe_acidosis (mkpHTraj [670; 660; 650] [0; 10; 20] 650 650) = true.
+  Proof. reflexivity. Qed.
+
+  Record IntegratedPrognosticData : Type := mkIntegratedProg {
+    ipd_etco2 : ETCO2Trajectory;
+    ipd_lactate : LactateTrajectory;
+    ipd_ph : pHTrajectory;
+    ipd_arrest_duration_min : nat;
+    ipd_rhythm_changes : nat
+  }.
+
+  Definition integrated_futility_score (ipd : IntegratedPrognosticData) : nat :=
+    (if etco2_persistently_low (ipd_etco2 ipd) then 3 else 0) +
+    (if lactate_extremely_elevated (ipd_lactate ipd) then 2 else 0) +
+    (if ph_persistent_severe_acidosis (ipd_ph ipd) then 2 else 0) +
+    (if 30 <=? ipd_arrest_duration_min ipd then 1 else 0).
+
+  Definition integrated_futility_threshold : nat := 5.
+
+  Definition termination_strongly_indicated (ipd : IntegratedPrognosticData) : bool :=
+    integrated_futility_threshold <=? integrated_futility_score ipd.
+
+  Definition sample_futile_case : IntegratedPrognosticData :=
+    mkIntegratedProg
+      (mkETCO2Traj [5; 6; 5] [0; 10; 20] 5 6 0)
+      (mkLactateTraj [180; 190] [0; 1] 180 190)
+      (mkpHTraj [660; 650] [0; 10] 650 650)
+      35
+      0.
+
+  Definition sample_continue_case : IntegratedPrognosticData :=
+    mkIntegratedProg
+      (mkETCO2Traj [15; 18; 22] [0; 10; 20] 15 22 1)
+      (mkLactateTraj [80; 60] [0; 1] 80 60)
+      (mkpHTraj [700; 720] [0; 10] 700 720)
+      15
+      2.
+
+  Theorem futile_case_terminate :
+    termination_strongly_indicated sample_futile_case = true.
+  Proof. reflexivity. Qed.
+
+  Theorem continue_case_not_futile :
+    termination_strongly_indicated sample_continue_case = false.
+  Proof. reflexivity. Qed.
+
+  Theorem futile_case_score :
+    integrated_futility_score sample_futile_case = 8.
+  Proof. reflexivity. Qed.
+
 End TerminationOfResuscitation.
 
 (******************************************************************************)
@@ -6800,6 +8449,235 @@ Module PostArrestCare.
 
   Definition burst_suppression_target_bursts_per_min : nat := 1.
 
+  Inductive TTMTargetStrategy : Type :=
+    | TTM_33C
+    | TTM_36C
+    | TTM_32to34C
+    | TTM_NormothermiaOnly.
+
+  Definition ttm_target_eq_dec : forall t1 t2 : TTMTargetStrategy, {t1 = t2} + {t1 <> t2}.
+  Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
+
+  Definition ttm_target_temp_x10 (strategy : TTMTargetStrategy) : nat * nat :=
+    match strategy with
+    | TTM_33C => (320, 340)
+    | TTM_36C => (360, 370)
+    | TTM_32to34C => (320, 340)
+    | TTM_NormothermiaOnly => (365, 375)
+    end.
+
+  Definition ttm_default_strategy : TTMTargetStrategy := TTM_36C.
+
+  Definition ttm_target_rationale : bool := true.
+
+  Record TTMProtocol : Type := mkTTMProtocol {
+    ttm_strategy : TTMTargetStrategy;
+    ttm_target_achieved : bool;
+    ttm_current_temp_x10 : nat;
+    ttm_maintenance_hr : nat;
+    ttm_rewarming_started : bool
+  }.
+
+  Definition ttm_maintenance_duration_hr : nat := 24.
+  Definition ttm_rewarming_rate_per_hr_x10_max : nat := 5.
+
+  Definition ttm_on_target (tp : TTMProtocol) : bool :=
+    let (tmin, tmax) := ttm_target_temp_x10 (ttm_strategy tp) in
+    (tmin <=? ttm_current_temp_x10 tp) && (ttm_current_temp_x10 tp <=? tmax).
+
+  Definition ttm_maintenance_complete (tp : TTMProtocol) : bool :=
+    ttm_maintenance_duration_hr <=? ttm_maintenance_hr tp.
+
+  Definition ttm_rewarming_safe (tp : TTMProtocol) : bool :=
+    ttm_maintenance_complete tp && ttm_target_achieved tp.
+
+  Theorem ttm_36_default :
+    ttm_default_strategy = TTM_36C.
+  Proof. reflexivity. Qed.
+
+  Inductive Vasopressor : Type :=
+    | VP_Norepinephrine
+    | VP_Epinephrine
+    | VP_Dopamine
+    | VP_Vasopressin
+    | VP_Phenylephrine
+    | VP_Dobutamine.
+
+  Definition vasopressor_eq_dec : forall v1 v2 : Vasopressor, {v1 = v2} + {v1 <> v2}.
+  Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
+
+  Definition vasopressor_priority (v : Vasopressor) : nat :=
+    match v with
+    | VP_Norepinephrine => 1
+    | VP_Epinephrine => 2
+    | VP_Vasopressin => 3
+    | VP_Dopamine => 4
+    | VP_Phenylephrine => 5
+    | VP_Dobutamine => 6
+    end.
+
+  Definition vasopressor_hierarchy : list Vasopressor :=
+    [VP_Norepinephrine; VP_Epinephrine; VP_Vasopressin; VP_Dopamine].
+
+  Definition norepinephrine_initial_mcg_per_kg_per_min_x100 : nat := 10.
+  Definition norepinephrine_max_mcg_per_kg_per_min_x100 : nat := 200.
+  Definition epinephrine_initial_mcg_per_kg_per_min_x100 : nat := 5.
+  Definition epinephrine_max_mcg_per_kg_per_min_x100 : nat := 200.
+  Definition vasopressin_fixed_dose_units_per_min_x100 : nat := 4.
+  Definition dopamine_initial_mcg_per_kg_per_min : nat := 5.
+  Definition dopamine_max_mcg_per_kg_per_min : nat := 20.
+
+  Definition preferred_first_line_vasopressor : Vasopressor := VP_Norepinephrine.
+
+  Definition map_target_mmHg : nat := 65.
+  Definition map_target_high_icp_mmHg : nat := 80.
+
+  Record VasopressorState : Type := mkVasopressorState {
+    vps_current : option Vasopressor;
+    vps_dose_x100 : nat;
+    vps_current_map : nat;
+    vps_target_map : nat;
+    vps_on_second_agent : bool
+  }.
+
+  Definition vasopressor_escalation_needed (vps : VasopressorState) : bool :=
+    vps_current_map vps <? vps_target_map vps.
+
+  Definition add_second_vasopressor_indicated (vps : VasopressorState) : bool :=
+    vasopressor_escalation_needed vps &&
+    (100 <=? vps_dose_x100 vps) &&
+    negb (vps_on_second_agent vps).
+
+  Theorem norepinephrine_first_line :
+    preferred_first_line_vasopressor = VP_Norepinephrine.
+  Proof. reflexivity. Qed.
+
+  Theorem norepi_higher_priority_than_epi :
+    vasopressor_priority VP_Norepinephrine <? vasopressor_priority VP_Epinephrine = true.
+  Proof. reflexivity. Qed.
+
+  Theorem epi_higher_priority_than_dopamine :
+    vasopressor_priority VP_Epinephrine <? vasopressor_priority VP_Dopamine = true.
+  Proof. reflexivity. Qed.
+
+  Definition pci_door_to_balloon_target_min : nat := 90.
+  Definition pci_door_to_balloon_stemi_target_min : nat := 60.
+  Definition pci_first_medical_contact_to_device_target_min : nat := 120.
+
+  Inductive PCIUrgency : Type :=
+    | PCI_Emergent
+    | PCI_Urgent
+    | PCI_Delayed
+    | PCI_NotIndicated.
+
+  Definition pci_urgency_eq_dec : forall p1 p2 : PCIUrgency, {p1 = p2} + {p1 <> p2}.
+  Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
+
+  Record PCIDecision : Type := mkPCIDecision {
+    pci_stemi : bool;
+    pci_nstemi : bool;
+    pci_shock : bool;
+    pci_comatose : bool;
+    pci_time_since_rosc_min : nat
+  }.
+
+  Definition determine_pci_urgency (pd : PCIDecision) : PCIUrgency :=
+    if pci_stemi pd then PCI_Emergent
+    else if pci_shock pd && pci_nstemi pd then PCI_Emergent
+    else if pci_nstemi pd then PCI_Urgent
+    else PCI_NotIndicated.
+
+  Definition pci_timing_appropriate (pd : PCIDecision) (elapsed_min : nat) : bool :=
+    match determine_pci_urgency pd with
+    | PCI_Emergent => elapsed_min <=? pci_door_to_balloon_stemi_target_min
+    | PCI_Urgent => elapsed_min <=? pci_door_to_balloon_target_min
+    | PCI_Delayed => true
+    | PCI_NotIndicated => true
+    end.
+
+  Theorem stemi_is_emergent :
+    determine_pci_urgency (mkPCIDecision true false false true 30) = PCI_Emergent.
+  Proof. reflexivity. Qed.
+
+  Theorem nstemi_with_shock_emergent :
+    determine_pci_urgency (mkPCIDecision false true true true 30) = PCI_Emergent.
+  Proof. reflexivity. Qed.
+
+  Theorem stemi_60min_appropriate :
+    pci_timing_appropriate (mkPCIDecision true false false true 30) 55 = true.
+  Proof. reflexivity. Qed.
+
+  Theorem stemi_90min_late :
+    pci_timing_appropriate (mkPCIDecision true false false true 30) 90 = false.
+  Proof. reflexivity. Qed.
+
+  Definition eeg_burst_suppression_target_ratio : nat := 50.
+  Definition eeg_titration_interval_hr : nat := 6.
+
+  Inductive EEGPattern : Type :=
+    | EEG_Normal
+    | EEG_Slowing
+    | EEG_BurstSuppression
+    | EEG_Suppression
+    | EEG_Status
+    | EEG_GPDs
+    | EEG_Myoclonic.
+
+  Definition eeg_pattern_eq_dec : forall e1 e2 : EEGPattern, {e1 = e2} + {e1 <> e2}.
+  Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
+
+  Record EEGTitration : Type := mkEEGTitration {
+    eeg_current_pattern : EEGPattern;
+    eeg_suppression_ratio_pct : nat;
+    eeg_sedation_dose_x100 : nat;
+    eeg_hours_at_target : nat
+  }.
+
+  Definition eeg_at_burst_suppression_target (et : EEGTitration) : bool :=
+    match eeg_current_pattern et with
+    | EEG_BurstSuppression =>
+        let sr := eeg_suppression_ratio_pct et in
+        (40 <=? sr) && (sr <=? 60)
+    | _ => false
+    end.
+
+  Definition eeg_needs_sedation_increase (et : EEGTitration) : bool :=
+    match eeg_current_pattern et with
+    | EEG_Status => true
+    | EEG_GPDs => true
+    | EEG_Myoclonic => true
+    | EEG_BurstSuppression => eeg_suppression_ratio_pct et <? 40
+    | _ => false
+    end.
+
+  Definition eeg_needs_sedation_decrease (et : EEGTitration) : bool :=
+    match eeg_current_pattern et with
+    | EEG_Suppression => true
+    | EEG_BurstSuppression => 60 <? eeg_suppression_ratio_pct et
+    | _ => false
+    end.
+
+  Definition sample_at_target_eeg : EEGTitration :=
+    mkEEGTitration EEG_BurstSuppression 50 100 12.
+
+  Definition sample_needs_increase : EEGTitration :=
+    mkEEGTitration EEG_Status 0 50 0.
+
+  Definition sample_oversuppressed : EEGTitration :=
+    mkEEGTitration EEG_Suppression 95 200 6.
+
+  Theorem at_target_no_change :
+    eeg_at_burst_suppression_target sample_at_target_eeg = true.
+  Proof. reflexivity. Qed.
+
+  Theorem status_needs_increase :
+    eeg_needs_sedation_increase sample_needs_increase = true.
+  Proof. reflexivity. Qed.
+
+  Theorem suppressed_needs_decrease :
+    eeg_needs_sedation_decrease sample_oversuppressed = true.
+  Proof. reflexivity. Qed.
+
 End PostArrestCare.
 
 (******************************************************************************)
@@ -7099,6 +8977,142 @@ Module Neuroprognostication.
   Proof. reflexivity. Qed.
 
   Theorem four_16_not_brain_death : four_indicates_brain_death four_16 = false.
+  Proof. reflexivity. Qed.
+
+  Inductive SSEPResult : Type :=
+    | SSEP_BilateralN20Present
+    | SSEP_UnilateralN20Absent
+    | SSEP_BilateralN20Absent
+    | SSEP_NotPerformed.
+
+  Definition ssep_result_eq_dec : forall s1 s2 : SSEPResult, {s1 = s2} + {s1 <> s2}.
+  Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
+
+  Definition ssep_poor_prognosis (s : SSEPResult) : bool :=
+    match s with
+    | SSEP_BilateralN20Absent => true
+    | _ => false
+    end.
+
+  Definition ssep_timing_valid_hr_min : nat := 24.
+  Definition ssep_timing_optimal_hr : nat := 72.
+
+  Inductive MRIFinding : Type :=
+    | MRI_Normal
+    | MRI_MildDiffusionRestriction
+    | MRI_ModerateDiffusionRestriction
+    | MRI_SevereDiffusionRestriction
+    | MRI_GlobalAnoxicInjury
+    | MRI_NotPerformed.
+
+  Definition mri_finding_eq_dec : forall m1 m2 : MRIFinding, {m1 = m2} + {m1 <> m2}.
+  Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
+
+  Definition mri_poor_prognosis (m : MRIFinding) : bool :=
+    match m with
+    | MRI_SevereDiffusionRestriction => true
+    | MRI_GlobalAnoxicInjury => true
+    | _ => false
+    end.
+
+  Definition mri_timing_optimal_hr_min : nat := 48.
+  Definition mri_timing_optimal_hr_max : nat := 120.
+
+  Record NSETrajectory : Type := mkNSETrajectory {
+    nse_24hr_ug_L : nat;
+    nse_48hr_ug_L : nat;
+    nse_72hr_ug_L : nat;
+    nse_hemolysis_excluded : bool
+  }.
+
+  Definition nse_rising (traj : NSETrajectory) : bool :=
+    (nse_24hr_ug_L traj <? nse_48hr_ug_L traj) &&
+    (nse_48hr_ug_L traj <=? nse_72hr_ug_L traj).
+
+  Definition nse_trajectory_poor_prognosis (traj : NSETrajectory) : bool :=
+    nse_hemolysis_excluded traj &&
+    ((60 <=? nse_48hr_ug_L traj) || (60 <=? nse_72hr_ug_L traj)) &&
+    nse_rising traj.
+
+  Definition nse_peak_value (traj : NSETrajectory) : nat :=
+    Nat.max (nse_24hr_ug_L traj) (Nat.max (nse_48hr_ug_L traj) (nse_72hr_ug_L traj)).
+
+  Theorem rising_nse_poor :
+    nse_trajectory_poor_prognosis (mkNSETrajectory 30 50 70 true) = true.
+  Proof. reflexivity. Qed.
+
+  Theorem falling_nse_not_poor :
+    nse_trajectory_poor_prognosis (mkNSETrajectory 40 30 20 true) = false.
+  Proof. reflexivity. Qed.
+
+  Definition npi_threshold_poor_prognosis : nat := 2.
+  Definition npi_normal_min : nat := 3.
+
+  Record PupillometryResult : Type := mkPupillometry {
+    pup_left_npi : nat;
+    pup_right_npi : nat;
+    pup_left_cv_pct : nat;
+    pup_right_cv_pct : nat;
+    pup_timing_hr_post_rosc : nat
+  }.
+
+  Definition bilateral_npi_absent (p : PupillometryResult) : bool :=
+    (pup_left_npi p <? npi_threshold_poor_prognosis) &&
+    (pup_right_npi p <? npi_threshold_poor_prognosis).
+
+  Definition npi_poor_prognosis (p : PupillometryResult) : bool :=
+    (72 <=? pup_timing_hr_post_rosc p) && bilateral_npi_absent p.
+
+  Definition npi_min (p : PupillometryResult) : nat :=
+    Nat.min (pup_left_npi p) (pup_right_npi p).
+
+  Theorem bilateral_absent_npi_poor :
+    npi_poor_prognosis (mkPupillometry 1 0 5 5 96) = true.
+  Proof. reflexivity. Qed.
+
+  Theorem early_npi_indeterminate :
+    npi_poor_prognosis (mkPupillometry 0 0 5 5 24) = false.
+  Proof. reflexivity. Qed.
+
+  Theorem normal_npi_not_poor :
+    npi_poor_prognosis (mkPupillometry 4 4 20 20 96) = false.
+  Proof. reflexivity. Qed.
+
+  Record MultimodalAssessment : Type := mkMultimodal {
+    mm_gcs_motor : nat;
+    mm_pupillary_absent : bool;
+    mm_corneal_absent : bool;
+    mm_ssep : SSEPResult;
+    mm_mri : MRIFinding;
+    mm_nse : NSETrajectory;
+    mm_npi : PupillometryResult;
+    mm_myoclonus_status : bool;
+    mm_hours_post_rosc : nat
+  }.
+
+  Definition count_poor_prognostic_markers (mm : MultimodalAssessment) : nat :=
+    (if mm_gcs_motor mm <=? 2 then 1 else 0) +
+    (if mm_pupillary_absent mm then 1 else 0) +
+    (if mm_corneal_absent mm then 1 else 0) +
+    (if ssep_poor_prognosis (mm_ssep mm) then 1 else 0) +
+    (if mri_poor_prognosis (mm_mri mm) then 1 else 0) +
+    (if nse_trajectory_poor_prognosis (mm_nse mm) then 1 else 0) +
+    (if npi_poor_prognosis (mm_npi mm) then 1 else 0) +
+    (if mm_myoclonus_status mm then 1 else 0).
+
+  Definition multimodal_criteria_met (mm : MultimodalAssessment) : bool :=
+    (72 <=? mm_hours_post_rosc mm) && (2 <=? count_poor_prognostic_markers mm).
+
+  Definition robust_poor_prognosis (mm : MultimodalAssessment) : bool :=
+    (72 <=? mm_hours_post_rosc mm) &&
+    ((ssep_poor_prognosis (mm_ssep mm) && (mm_gcs_motor mm <=? 2)) ||
+     (mri_poor_prognosis (mm_mri mm) && mm_myoclonus_status mm) ||
+     (npi_poor_prognosis (mm_npi mm) && ssep_poor_prognosis (mm_ssep mm))).
+
+  Theorem multiple_markers_poor :
+    count_poor_prognostic_markers
+      (mkMultimodal 1 true true SSEP_BilateralN20Absent MRI_GlobalAnoxicInjury
+                    (mkNSETrajectory 30 50 70 true) (mkPupillometry 0 0 5 5 96) true 96) = 8.
   Proof. reflexivity. Qed.
 
 End Neuroprognostication.

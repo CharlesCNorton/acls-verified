@@ -224,6 +224,7 @@ Module CPR.
   Definition etco2_min_during_cpr : nat := 10.
   Definition etco2_max_during_cpr : nat := 20.
   Definition etco2_target_during_cpr : nat := 15.
+  Definition etco2_rosc_threshold : nat := 40.
 
   Definition etco2_indicates_adequate_cpr (etco2_mmHg : nat) : bool :=
     (etco2_min_during_cpr <=? etco2_mmHg) && (etco2_mmHg <=? etco2_max_during_cpr).
@@ -232,7 +233,7 @@ Module CPR.
     etco2_mmHg <? etco2_min_during_cpr.
 
   Definition etco2_suggests_rosc_during_cpr (etco2_mmHg : nat) : bool :=
-    40 <=? etco2_mmHg.
+    etco2_rosc_threshold <=? etco2_mmHg.
 
   Theorem etco2_15_adequate : etco2_indicates_adequate_cpr 15 = true.
   Proof. reflexivity. Qed.
@@ -597,17 +598,21 @@ Module Medication.
     | CalciumChloride
     | CalciumGluconate
     | SodiumBicarbonate
-    | LipidEmulsion.
+    | LipidEmulsion
+    | Vasopressin
+    | Atropine
+    | Adenosine.
 
   Definition drug_eq_dec : forall d1 d2 : Drug, {d1 = d2} + {d1 <> d2}.
   Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
 
   Definition all_drugs : list Drug :=
     [Epinephrine; Amiodarone; Lidocaine; MagnesiumSulfate;
-     CalciumChloride; CalciumGluconate; SodiumBicarbonate; LipidEmulsion].
+     CalciumChloride; CalciumGluconate; SodiumBicarbonate; LipidEmulsion;
+     Vasopressin; Atropine; Adenosine].
 
   Lemma all_drugs_complete : forall d : Drug, In d all_drugs.
-  Proof. intros []; simpl; auto 12. Qed.
+  Proof. intros []; simpl; auto 15. Qed.
 
   Inductive Route : Type :=
     | IV
@@ -644,6 +649,19 @@ Module Medication.
   Definition lipid_bolus_ml_per_kg_x10 : nat := 15.
   Definition lipid_infusion_ml_per_kg_per_min_x100 : nat := 25.
   Definition lipid_max_dose_ml_per_kg : nat := 12.
+
+  Definition vasopressin_dose_units : nat := 40.
+  Definition vasopressin_aha_2020_status : bool := false.
+
+  Definition atropine_dose_mg_x10 : nat := 5.
+  Definition atropine_max_dose_mg_x10 : nat := 30.
+  Definition atropine_interval_min : nat := 3.
+  Definition atropine_bradycardia_only : bool := true.
+
+  Definition adenosine_first_dose_mg : nat := 6.
+  Definition adenosine_second_dose_mg : nat := 12.
+  Definition adenosine_max_dose_mg : nat := 12.
+  Definition adenosine_rapid_push_required : bool := true.
 
   Record Dose : Type := mkDose {
     drug : Drug;
@@ -710,8 +728,11 @@ Module Medication.
 
   Definition epinephrine_peds_dose_mcg_per_kg : nat := 10.
   Definition epinephrine_peds_max_dose_mg : nat := 1.
+  Definition epinephrine_peds_min_dose_mcg : nat := 10.
+  Definition epinephrine_peds_max_dose_mcg : nat := 1000.
 
   Definition amiodarone_peds_dose_mg_per_kg : nat := 5.
+  Definition amiodarone_peds_min_dose_mg : nat := 5.
   Definition amiodarone_peds_max_dose_mg : nat := 300.
 
   Definition lidocaine_peds_dose_mg_per_kg : nat := 1.
@@ -756,6 +777,129 @@ Module Medication.
     else if years <? 8 then Child
     else if years <? 18 then Adolescent
     else Adult.
+
+  Inductive BroselowZone : Type :=
+    | Broselow_Gray
+    | Broselow_Pink
+    | Broselow_Red
+    | Broselow_Purple
+    | Broselow_Yellow
+    | Broselow_White
+    | Broselow_Blue
+    | Broselow_Orange
+    | Broselow_Green.
+
+  Definition broselow_zone_eq_dec : forall z1 z2 : BroselowZone, {z1 = z2} + {z1 <> z2}.
+  Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
+
+  Definition broselow_weight_kg (z : BroselowZone) : nat :=
+    match z with
+    | Broselow_Gray => 3
+    | Broselow_Pink => 6
+    | Broselow_Red => 8
+    | Broselow_Purple => 10
+    | Broselow_Yellow => 12
+    | Broselow_White => 14
+    | Broselow_Blue => 18
+    | Broselow_Orange => 24
+    | Broselow_Green => 36
+    end.
+
+  Definition broselow_height_min_cm (z : BroselowZone) : nat :=
+    match z with
+    | Broselow_Gray => 46
+    | Broselow_Pink => 60
+    | Broselow_Red => 70
+    | Broselow_Purple => 80
+    | Broselow_Yellow => 90
+    | Broselow_White => 100
+    | Broselow_Blue => 112
+    | Broselow_Orange => 125
+    | Broselow_Green => 138
+    end.
+
+  Definition broselow_height_max_cm (z : BroselowZone) : nat :=
+    match z with
+    | Broselow_Gray => 59
+    | Broselow_Pink => 69
+    | Broselow_Red => 79
+    | Broselow_Purple => 89
+    | Broselow_Yellow => 99
+    | Broselow_White => 111
+    | Broselow_Blue => 124
+    | Broselow_Orange => 137
+    | Broselow_Green => 150
+    end.
+
+  Definition broselow_zone_from_height (height_cm : nat) : option BroselowZone :=
+    if height_cm <? 46 then None
+    else if height_cm <? 60 then Some Broselow_Gray
+    else if height_cm <? 70 then Some Broselow_Pink
+    else if height_cm <? 80 then Some Broselow_Red
+    else if height_cm <? 90 then Some Broselow_Purple
+    else if height_cm <? 100 then Some Broselow_Yellow
+    else if height_cm <? 112 then Some Broselow_White
+    else if height_cm <? 125 then Some Broselow_Blue
+    else if height_cm <? 138 then Some Broselow_Orange
+    else if height_cm <=? 150 then Some Broselow_Green
+    else None.
+
+  Definition weight_from_height_broselow (height_cm : nat) : option nat :=
+    match broselow_zone_from_height height_cm with
+    | Some z => Some (broselow_weight_kg z)
+    | None => None
+    end.
+
+  Definition weight_from_age_years (age_years : nat) : nat :=
+    if age_years =? 0 then 4
+    else if age_years <=? 1 then 10
+    else if age_years <=? 5 then 2 * age_years + 8
+    else if age_years <=? 14 then 3 * age_years
+    else 70.
+
+  Definition pawper_weight_from_habitus (mid_arm_circ_cm length_cm : nat) : nat :=
+    let base := (length_cm * 3) / 10 in
+    if mid_arm_circ_cm <? 11 then base * 8 / 10
+    else if mid_arm_circ_cm <? 13 then base * 9 / 10
+    else if mid_arm_circ_cm <? 15 then base
+    else if mid_arm_circ_cm <? 18 then base * 11 / 10
+    else base * 12 / 10.
+
+  Theorem broselow_pink_weight : broselow_weight_kg Broselow_Pink = 6.
+  Proof. reflexivity. Qed.
+
+  Theorem broselow_blue_weight : broselow_weight_kg Broselow_Blue = 18.
+  Proof. reflexivity. Qed.
+
+  Theorem height_65_is_pink : broselow_zone_from_height 65 = Some Broselow_Pink.
+  Proof. reflexivity. Qed.
+
+  Theorem height_120_is_blue : broselow_zone_from_height 120 = Some Broselow_Blue.
+  Proof. reflexivity. Qed.
+
+  Theorem age_3_weight : weight_from_age_years 3 = 14.
+  Proof. reflexivity. Qed.
+
+  Theorem age_10_weight : weight_from_age_years 10 = 30.
+  Proof. reflexivity. Qed.
+
+  Definition broselow_epi_dose_mcg (z : BroselowZone) : nat :=
+    epinephrine_peds_dose_mcg_per_kg * broselow_weight_kg z.
+
+  Definition broselow_amio_dose_mg (z : BroselowZone) : nat :=
+    Nat.min (amiodarone_peds_dose_mg_per_kg * broselow_weight_kg z) amiodarone_peds_max_dose_mg.
+
+  Definition broselow_defib_initial_J (z : BroselowZone) : nat :=
+    defibrillation_peds_initial_J_per_kg * broselow_weight_kg z.
+
+  Definition broselow_defib_subsequent_J (z : BroselowZone) : nat :=
+    defibrillation_peds_subsequent_J_per_kg * broselow_weight_kg z.
+
+  Theorem broselow_pink_epi : broselow_epi_dose_mcg Broselow_Pink = 60.
+  Proof. reflexivity. Qed.
+
+  Theorem broselow_blue_defib_initial : broselow_defib_initial_J Broselow_Blue = 36.
+  Proof. reflexivity. Qed.
 
   Record PediatricPatient : Type := mkPedsPatient {
     peds_weight_kg : nat;
@@ -828,11 +972,11 @@ Module Medication.
 
   Definition peds_dose_valid_epi (p : PediatricPatient) : bool :=
     let dose := epinephrine_peds_dose_mcg p in
-    (10 <=? dose) && (dose <=? 1000).
+    (epinephrine_peds_min_dose_mcg <=? dose) && (dose <=? epinephrine_peds_max_dose_mcg).
 
   Definition peds_dose_valid_amio (p : PediatricPatient) : bool :=
     let dose := amiodarone_peds_dose p in
-    (5 <=? dose) && (dose <=? amiodarone_peds_max_dose_mg).
+    (amiodarone_peds_min_dose_mg <=? dose) && (dose <=? amiodarone_peds_max_dose_mg).
 
   Definition peds_dose_valid_defib (p : PediatricPatient) (joules : nat) (shock_num : nat) : bool :=
     let max := defibrillation_peds_max p in
@@ -1072,6 +1216,9 @@ Module Medication.
     | SodiumBicarbonate => negb (bicarb_contraindicated ci)
     | Epinephrine => true
     | LipidEmulsion => true
+    | Vasopressin => true
+    | Atropine => negb (has_third_degree_av_block ci)
+    | Adenosine => negb (has_second_degree_av_block ci || has_third_degree_av_block ci || has_sick_sinus_syndrome ci)
     end.
 
   Theorem no_ci_all_drugs_safe : forall d,
@@ -1343,6 +1490,42 @@ End Action.
 
 Module AlgorithmState.
 
+  Inductive Phase : Type :=
+    | Phase_Initial
+    | Phase_RhythmCheck
+    | Phase_ShockDecision
+    | Phase_CPR_Interval
+    | Phase_DrugWindow
+    | Phase_PostROSC
+    | Phase_Terminated.
+
+  Definition phase_eq_dec : forall p1 p2 : Phase, {p1 = p2} + {p1 <> p2}.
+  Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
+
+  Definition phase_allows_shock (p : Phase) : bool :=
+    match p with
+    | Phase_ShockDecision => true
+    | _ => false
+    end.
+
+  Definition phase_allows_drugs (p : Phase) : bool :=
+    match p with
+    | Phase_DrugWindow | Phase_CPR_Interval => true
+    | _ => false
+    end.
+
+  Definition phase_allows_cpr (p : Phase) : bool :=
+    match p with
+    | Phase_CPR_Interval | Phase_DrugWindow => true
+    | _ => false
+    end.
+
+  Definition phase_is_active (p : Phase) : bool :=
+    match p with
+    | Phase_PostROSC | Phase_Terminated => false
+    | _ => true
+    end.
+
   Inductive IdentifiedCause : Type :=
     | Cause_Hyperkalemia
     | Cause_Hypokalemia
@@ -1365,6 +1548,7 @@ Module AlgorithmState.
   Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
 
   Record t : Type := mkState {
+    current_phase : Phase;
     current_rhythm : Rhythm.t;
     shock_count : nat;
     cpr_cycles : nat;
@@ -1396,14 +1580,17 @@ Module AlgorithmState.
     cath_lab_activated : bool
   }.
 
+  Definition hyperkalemia_threshold_x10 : nat := 55.
+  Definition min_cpr_cycles_for_ecpr : nat := 10.
+
   Definition initial (r : Rhythm.t) : t :=
-    mkState r 0 0 0 0 0 0 0 0 0 0 0 0 None None 0 0 None None false false false [] 70 None None false false false.
+    mkState Phase_RhythmCheck r 0 0 0 0 0 0 0 0 0 0 0 0 None None 0 0 None None false false false [] 70 None None false false false.
 
   Definition initial_with_weight (r : Rhythm.t) (w : nat) : t :=
-    mkState r 0 0 0 0 0 0 0 0 0 0 0 0 None None 0 0 None None false false false [] w None None false false false.
+    mkState Phase_RhythmCheck r 0 0 0 0 0 0 0 0 0 0 0 0 None None 0 0 None None false false false [] w None None false false false.
 
   Definition initial_with_no_flow (r : Rhythm.t) (no_flow : nat) : t :=
-    mkState r 0 0 0 0 0 0 0 0 0 0 0 0 None None no_flow 0 None None false false false [] 70 None None false false false.
+    mkState Phase_RhythmCheck r 0 0 0 0 0 0 0 0 0 0 0 0 None None no_flow 0 None None false false false [] 70 None None false false false.
 
   Definition is_shockable_state (s : t) : bool :=
     Rhythm.shockable (current_rhythm s).
@@ -1540,7 +1727,7 @@ Module AlgorithmState.
   Proof. reflexivity. Qed.
 
   Definition with_shock (s : t) : t :=
-    mkState (current_rhythm s) (S (shock_count s)) (cpr_cycles s)
+    mkState Phase_CPR_Interval (current_rhythm s) (S (shock_count s)) (cpr_cycles s)
             (epinephrine_doses s) (amiodarone_doses s) (lidocaine_doses s)
             (magnesium_doses s) (calcium_doses s) (bicarb_doses s) (lipid_doses s)
             (amiodarone_total_mg s) (lidocaine_total_mg s)
@@ -1552,7 +1739,7 @@ Module AlgorithmState.
             (ecpr_initiated s) (cath_lab_activated s).
 
   Definition with_cpr_cycle (s : t) : t :=
-    mkState (current_rhythm s) (shock_count s) (S (cpr_cycles s))
+    mkState Phase_RhythmCheck (current_rhythm s) (shock_count s) (S (cpr_cycles s))
             (epinephrine_doses s) (amiodarone_doses s) (lidocaine_doses s)
             (magnesium_doses s) (calcium_doses s) (bicarb_doses s) (lipid_doses s)
             (amiodarone_total_mg s) (lidocaine_total_mg s)
@@ -1564,7 +1751,7 @@ Module AlgorithmState.
             (measured_potassium_x10 s) (is_torsades s) (ecpr_initiated s) (cath_lab_activated s).
 
   Definition with_epinephrine (s : t) : t :=
-    mkState (current_rhythm s) (shock_count s) (cpr_cycles s)
+    mkState (current_phase s) (current_rhythm s) (shock_count s) (cpr_cycles s)
             (S (epinephrine_doses s)) (amiodarone_doses s) (lidocaine_doses s)
             (magnesium_doses s) (calcium_doses s) (bicarb_doses s) (lipid_doses s)
             (amiodarone_total_mg s) (lidocaine_total_mg s)
@@ -1579,7 +1766,7 @@ Module AlgorithmState.
     let dose := if amiodarone_doses s =? 0
                 then Medication.amiodarone_first_dose_mg
                 else Medication.amiodarone_second_dose_mg in
-    mkState (current_rhythm s) (shock_count s) (cpr_cycles s)
+    mkState (current_phase s) (current_rhythm s) (shock_count s) (cpr_cycles s)
             (epinephrine_doses s) (S (amiodarone_doses s)) (lidocaine_doses s)
             (magnesium_doses s) (calcium_doses s) (bicarb_doses s) (lipid_doses s)
             (amiodarone_total_mg s + dose) (lidocaine_total_mg s)
@@ -1594,7 +1781,7 @@ Module AlgorithmState.
     let dose := if lidocaine_doses s =? 0
                 then (Medication.lidocaine_first_dose_mg_per_kg_x10 * patient_weight_kg s) / 10
                 else (Medication.lidocaine_repeat_dose_mg_per_kg_x10 * patient_weight_kg s) / 10 in
-    mkState (current_rhythm s) (shock_count s) (cpr_cycles s)
+    mkState (current_phase s) (current_rhythm s) (shock_count s) (cpr_cycles s)
             (epinephrine_doses s) (amiodarone_doses s) (S (lidocaine_doses s))
             (magnesium_doses s) (calcium_doses s) (bicarb_doses s) (lipid_doses s)
             (amiodarone_total_mg s) (lidocaine_total_mg s + dose)
@@ -1606,7 +1793,7 @@ Module AlgorithmState.
             (ecpr_initiated s) (cath_lab_activated s).
 
   Definition with_magnesium (s : t) : t :=
-    mkState (current_rhythm s) (shock_count s) (cpr_cycles s)
+    mkState (current_phase s) (current_rhythm s) (shock_count s) (cpr_cycles s)
             (epinephrine_doses s) (amiodarone_doses s) (lidocaine_doses s)
             (S (magnesium_doses s)) (calcium_doses s) (bicarb_doses s) (lipid_doses s)
             (amiodarone_total_mg s) (lidocaine_total_mg s)
@@ -1618,7 +1805,7 @@ Module AlgorithmState.
             (ecpr_initiated s) (cath_lab_activated s).
 
   Definition with_calcium (s : t) : t :=
-    mkState (current_rhythm s) (shock_count s) (cpr_cycles s)
+    mkState (current_phase s) (current_rhythm s) (shock_count s) (cpr_cycles s)
             (epinephrine_doses s) (amiodarone_doses s) (lidocaine_doses s)
             (magnesium_doses s) (S (calcium_doses s)) (bicarb_doses s) (lipid_doses s)
             (amiodarone_total_mg s) (lidocaine_total_mg s)
@@ -1630,7 +1817,7 @@ Module AlgorithmState.
             (ecpr_initiated s) (cath_lab_activated s).
 
   Definition with_bicarb (s : t) : t :=
-    mkState (current_rhythm s) (shock_count s) (cpr_cycles s)
+    mkState (current_phase s) (current_rhythm s) (shock_count s) (cpr_cycles s)
             (epinephrine_doses s) (amiodarone_doses s) (lidocaine_doses s)
             (magnesium_doses s) (calcium_doses s) (S (bicarb_doses s)) (lipid_doses s)
             (amiodarone_total_mg s) (lidocaine_total_mg s)
@@ -1642,7 +1829,7 @@ Module AlgorithmState.
             (ecpr_initiated s) (cath_lab_activated s).
 
   Definition with_lipid (s : t) : t :=
-    mkState (current_rhythm s) (shock_count s) (cpr_cycles s)
+    mkState (current_phase s) (current_rhythm s) (shock_count s) (cpr_cycles s)
             (epinephrine_doses s) (amiodarone_doses s) (lidocaine_doses s)
             (magnesium_doses s) (calcium_doses s) (bicarb_doses s) (S (lipid_doses s))
             (amiodarone_total_mg s) (lidocaine_total_mg s)
@@ -1653,8 +1840,11 @@ Module AlgorithmState.
             (measured_ph_x100 s) (measured_potassium_x10 s) (is_torsades s)
             (ecpr_initiated s) (cath_lab_activated s).
 
+  Definition next_phase_after_rhythm_check (r : Rhythm.t) : Phase :=
+    if Rhythm.shockable r then Phase_ShockDecision else Phase_DrugWindow.
+
   Definition with_rhythm (s : t) (r : Rhythm.t) : t :=
-    mkState r (shock_count s) (cpr_cycles s)
+    mkState (next_phase_after_rhythm_check r) r (shock_count s) (cpr_cycles s)
             (epinephrine_doses s) (amiodarone_doses s) (lidocaine_doses s)
             (magnesium_doses s) (calcium_doses s) (bicarb_doses s) (lipid_doses s)
             (amiodarone_total_mg s) (lidocaine_total_mg s)
@@ -1666,7 +1856,7 @@ Module AlgorithmState.
             (ecpr_initiated s) (cath_lab_activated s).
 
   Definition with_rosc (s : t) : t :=
-    mkState (current_rhythm s) (shock_count s) (cpr_cycles s)
+    mkState Phase_PostROSC (current_rhythm s) (shock_count s) (cpr_cycles s)
             (epinephrine_doses s) (amiodarone_doses s) (lidocaine_doses s)
             (magnesium_doses s) (calcium_doses s) (bicarb_doses s) (lipid_doses s)
             (amiodarone_total_mg s) (lidocaine_total_mg s)
@@ -1678,7 +1868,7 @@ Module AlgorithmState.
             (ecpr_initiated s) (cath_lab_activated s).
 
   Definition with_cause (s : t) (c : IdentifiedCause) : t :=
-    mkState (current_rhythm s) (shock_count s) (cpr_cycles s)
+    mkState (current_phase s) (current_rhythm s) (shock_count s) (cpr_cycles s)
             (epinephrine_doses s) (amiodarone_doses s) (lidocaine_doses s)
             (magnesium_doses s) (calcium_doses s) (bicarb_doses s) (lipid_doses s)
             (amiodarone_total_mg s) (lidocaine_total_mg s)
@@ -1690,7 +1880,7 @@ Module AlgorithmState.
             (ecpr_initiated s) (cath_lab_activated s).
 
   Definition with_ph (s : t) (ph : nat) : t :=
-    mkState (current_rhythm s) (shock_count s) (cpr_cycles s)
+    mkState (current_phase s) (current_rhythm s) (shock_count s) (cpr_cycles s)
             (epinephrine_doses s) (amiodarone_doses s) (lidocaine_doses s)
             (magnesium_doses s) (calcium_doses s) (bicarb_doses s) (lipid_doses s)
             (amiodarone_total_mg s) (lidocaine_total_mg s)
@@ -1702,7 +1892,7 @@ Module AlgorithmState.
             (ecpr_initiated s) (cath_lab_activated s).
 
   Definition with_potassium (s : t) (k : nat) : t :=
-    mkState (current_rhythm s) (shock_count s) (cpr_cycles s)
+    mkState (current_phase s) (current_rhythm s) (shock_count s) (cpr_cycles s)
             (epinephrine_doses s) (amiodarone_doses s) (lidocaine_doses s)
             (magnesium_doses s) (calcium_doses s) (bicarb_doses s) (lipid_doses s)
             (amiodarone_total_mg s) (lidocaine_total_mg s)
@@ -1714,7 +1904,7 @@ Module AlgorithmState.
             (ecpr_initiated s) (cath_lab_activated s).
 
   Definition with_torsades (s : t) : t :=
-    mkState (current_rhythm s) (shock_count s) (cpr_cycles s)
+    mkState (current_phase s) (current_rhythm s) (shock_count s) (cpr_cycles s)
             (epinephrine_doses s) (amiodarone_doses s) (lidocaine_doses s)
             (magnesium_doses s) (calcium_doses s) (bicarb_doses s) (lipid_doses s)
             (amiodarone_total_mg s) (lidocaine_total_mg s)
@@ -1726,7 +1916,7 @@ Module AlgorithmState.
             (ecpr_initiated s) (cath_lab_activated s).
 
   Definition with_ecpr (s : t) : t :=
-    mkState (current_rhythm s) (shock_count s) (cpr_cycles s)
+    mkState (current_phase s) (current_rhythm s) (shock_count s) (cpr_cycles s)
             (epinephrine_doses s) (amiodarone_doses s) (lidocaine_doses s)
             (magnesium_doses s) (calcium_doses s) (bicarb_doses s) (lipid_doses s)
             (amiodarone_total_mg s) (lidocaine_total_mg s)
@@ -1738,7 +1928,7 @@ Module AlgorithmState.
             true (cath_lab_activated s).
 
   Definition with_cath_lab (s : t) : t :=
-    mkState (current_rhythm s) (shock_count s) (cpr_cycles s)
+    mkState (current_phase s) (current_rhythm s) (shock_count s) (cpr_cycles s)
             (epinephrine_doses s) (amiodarone_doses s) (lidocaine_doses s)
             (magnesium_doses s) (calcium_doses s) (bicarb_doses s) (lipid_doses s)
             (amiodarone_total_mg s) (lidocaine_total_mg s)
@@ -1800,7 +1990,7 @@ Module AlgorithmState.
     has_cause s Cause_Hyperkalemia ||
     match measured_potassium_x10 s with
     | None => false
-    | Some k => 55 <=? k
+    | Some k => hyperkalemia_threshold_x10 <=? k
     end.
 
   Definition has_acidosis (s : t) : bool :=
@@ -1907,13 +2097,13 @@ Module AlgorithmState.
 
   Theorem high_etco2_suggests_rosc : forall s e,
     etco2_during_cpr s = Some e ->
-    e >= 40 ->
+    e >= CPR.etco2_rosc_threshold ->
     cpr_quality_suggests_rosc s = true.
   Proof.
     intros s e He Hge.
     unfold cpr_quality_suggests_rosc. rewrite He.
     unfold CPR.etco2_suggests_rosc_during_cpr.
-    destruct (40 <=? e) eqn:E.
+    destruct (CPR.etco2_rosc_threshold <=? e) eqn:E.
     - reflexivity.
     - apply Nat.leb_gt in E. lia.
   Qed.
@@ -1980,12 +2170,11 @@ Module Decision.
 
   Definition shockable_recommendation (s : AlgorithmState.t) : Recommendation :=
     if rosc_achieved s then ROSC_achieved
+    else if shock_count s <? 2 then Shock_then_CPR
     else match reversible_cause_recommendation s with
          | Some rec => rec
          | None =>
-           if shock_count s =? 0 then Shock_then_CPR
-           else if (shock_count s =? 1) then Shock_then_CPR
-           else if (shock_count s =? 2) && epi_due s then Give_Epi_during_CPR
+           if (shock_count s =? 2) && epi_due s then Give_Epi_during_CPR
            else match antiarrhythmic_recommendation s with
                 | Some rec => rec
                 | None =>
@@ -2009,7 +2198,7 @@ Module Decision.
 
   Definition recommend_with_ecpr (s : AlgorithmState.t) (ecpr_eligible : bool) : Recommendation :=
     if rosc_achieved s then ROSC_achieved
-    else if ecpr_eligible && negb (ecpr_initiated s) && (10 <=? cpr_cycles s) then Consider_ECPR
+    else if ecpr_eligible && negb (ecpr_initiated s) && (AlgorithmState.min_cpr_cycles_for_ecpr <=? cpr_cycles s) then Consider_ECPR
     else recommend s.
 
   Definition recommend_with_cath_lab (s : AlgorithmState.t) (stemi_suspected : bool) : Recommendation :=
@@ -2150,38 +2339,79 @@ Module Decision.
     destruct (3 <=? shock_count s) eqn:E2; reflexivity.
   Qed.
 
-  Theorem hyperkalemia_gets_calcium : forall s,
+  Theorem hyperkalemia_gets_calcium_nonshockable : forall s,
+    is_shockable_state s = false ->
     rosc_achieved s = false ->
     needs_lipid s = false ->
     needs_calcium s = true ->
     recommend s = Give_Calcium_during_CPR.
   Proof.
-    intros s Hrosc Hnlipid Hcalc.
-    unfold recommend.
-    destruct (is_shockable_state s).
-    - unfold shockable_recommendation. rewrite Hrosc.
-      unfold reversible_cause_recommendation.
-      rewrite Hnlipid, Hcalc. reflexivity.
-    - unfold nonshockable_recommendation. rewrite Hrosc.
-      unfold reversible_cause_recommendation.
-      rewrite Hnlipid, Hcalc. reflexivity.
+    intros s Hnonshock Hrosc Hnlipid Hcalc.
+    unfold recommend. rewrite Hnonshock.
+    unfold nonshockable_recommendation. rewrite Hrosc.
+    unfold reversible_cause_recommendation.
+    rewrite Hnlipid, Hcalc. reflexivity.
   Qed.
 
-  Theorem local_anesthetic_toxicity_gets_lipid : forall s,
+  Theorem hyperkalemia_gets_calcium_after_initial_shocks : forall s,
+    is_shockable_state s = true ->
+    2 <=? shock_count s = true ->
+    rosc_achieved s = false ->
+    needs_lipid s = false ->
+    needs_calcium s = true ->
+    recommend s = Give_Calcium_during_CPR.
+  Proof.
+    intros s Hshock Hsc2 Hrosc Hnlipid Hcalc.
+    unfold recommend. rewrite Hshock.
+    unfold shockable_recommendation. rewrite Hrosc.
+    assert (shock_count s <? 2 = false) as Hnotlt.
+    { apply Nat.ltb_ge. apply Nat.leb_le in Hsc2. exact Hsc2. }
+    rewrite Hnotlt.
+    unfold reversible_cause_recommendation.
+    rewrite Hnlipid, Hcalc. reflexivity.
+  Qed.
+
+  Theorem shockable_initial_shocks_first : forall s,
+    is_shockable_state s = true ->
+    shock_count s <? 2 = true ->
+    rosc_achieved s = false ->
+    recommend s = Shock_then_CPR.
+  Proof.
+    intros s Hshock Hsc Hrosc.
+    unfold recommend. rewrite Hshock.
+    unfold shockable_recommendation. rewrite Hrosc, Hsc. reflexivity.
+  Qed.
+
+  Theorem local_anesthetic_toxicity_gets_lipid_nonshockable : forall s,
+    is_shockable_state s = false ->
     rosc_achieved s = false ->
     needs_lipid s = true ->
     recommend s = Give_Lipid_during_CPR.
   Proof.
-    intros s Hrosc Hlipid.
-    unfold recommend.
-    destruct (is_shockable_state s).
-    - unfold shockable_recommendation. rewrite Hrosc.
-      unfold reversible_cause_recommendation. rewrite Hlipid. reflexivity.
-    - unfold nonshockable_recommendation. rewrite Hrosc.
-      unfold reversible_cause_recommendation. rewrite Hlipid. reflexivity.
+    intros s Hnonshock Hrosc Hlipid.
+    unfold recommend. rewrite Hnonshock.
+    unfold nonshockable_recommendation. rewrite Hrosc.
+    unfold reversible_cause_recommendation. rewrite Hlipid. reflexivity.
   Qed.
 
-  Theorem torsades_gets_magnesium : forall s,
+  Theorem local_anesthetic_toxicity_gets_lipid_after_initial_shocks : forall s,
+    is_shockable_state s = true ->
+    2 <=? shock_count s = true ->
+    rosc_achieved s = false ->
+    needs_lipid s = true ->
+    recommend s = Give_Lipid_during_CPR.
+  Proof.
+    intros s Hshock Hsc2 Hrosc Hlipid.
+    unfold recommend. rewrite Hshock.
+    unfold shockable_recommendation. rewrite Hrosc.
+    assert (shock_count s <? 2 = false) as Hnotlt.
+    { apply Nat.ltb_ge. apply Nat.leb_le in Hsc2. exact Hsc2. }
+    rewrite Hnotlt.
+    unfold reversible_cause_recommendation. rewrite Hlipid. reflexivity.
+  Qed.
+
+  Theorem torsades_gets_magnesium_nonshockable : forall s,
+    is_shockable_state s = false ->
     rosc_achieved s = false ->
     needs_lipid s = false ->
     needs_calcium s = false ->
@@ -2189,15 +2419,31 @@ Module Decision.
     needs_magnesium s = true ->
     recommend s = Give_Mag_during_CPR.
   Proof.
-    intros s Hrosc Hnlipid Hncalc Hnbicarb Hmag.
-    unfold recommend.
-    destruct (is_shockable_state s).
-    - unfold shockable_recommendation. rewrite Hrosc.
-      unfold reversible_cause_recommendation.
-      rewrite Hnlipid, Hncalc, Hnbicarb, Hmag. reflexivity.
-    - unfold nonshockable_recommendation. rewrite Hrosc.
-      unfold reversible_cause_recommendation.
-      rewrite Hnlipid, Hncalc, Hnbicarb, Hmag. reflexivity.
+    intros s Hnonshock Hrosc Hnlipid Hncalc Hnbicarb Hmag.
+    unfold recommend. rewrite Hnonshock.
+    unfold nonshockable_recommendation. rewrite Hrosc.
+    unfold reversible_cause_recommendation.
+    rewrite Hnlipid, Hncalc, Hnbicarb, Hmag. reflexivity.
+  Qed.
+
+  Theorem torsades_gets_magnesium_after_initial_shocks : forall s,
+    is_shockable_state s = true ->
+    2 <=? shock_count s = true ->
+    rosc_achieved s = false ->
+    needs_lipid s = false ->
+    needs_calcium s = false ->
+    needs_bicarb s = false ->
+    needs_magnesium s = true ->
+    recommend s = Give_Mag_during_CPR.
+  Proof.
+    intros s Hshock Hsc2 Hrosc Hnlipid Hncalc Hnbicarb Hmag.
+    unfold recommend. rewrite Hshock.
+    unfold shockable_recommendation. rewrite Hrosc.
+    assert (shock_count s <? 2 = false) as Hnotlt.
+    { apply Nat.ltb_ge. apply Nat.leb_le in Hsc2. exact Hsc2. }
+    rewrite Hnotlt.
+    unfold reversible_cause_recommendation.
+    rewrite Hnlipid, Hncalc, Hnbicarb, Hmag. reflexivity.
   Qed.
 
   Theorem amiodarone_recommended_first : forall s,
@@ -2250,6 +2496,157 @@ Module Decision.
   Qed.
 
 End Decision.
+
+(******************************************************************************)
+(*                                                                            *)
+(*              SECTION 6B: NORMATIVE ACLS SPECIFICATION                      *)
+(*                                                                            *)
+(*  Independent specification of allowed actions per ACLS guidelines.         *)
+(*  This provides a refinement target for the decision functions.             *)
+(*                                                                            *)
+(******************************************************************************)
+
+Module ACLSSpec.
+
+  Import AlgorithmState.
+  Import Decision.
+
+  Inductive Allowed : t -> Recommendation -> Prop :=
+    | Allow_ROSC : forall s,
+        rosc_achieved s = true ->
+        Allowed s ROSC_achieved
+    | Allow_Shock_Shockable : forall s,
+        rosc_achieved s = false ->
+        is_shockable_state s = true ->
+        current_phase s = Phase_ShockDecision ->
+        Allowed s Shock_then_CPR
+    | Allow_Shock_Initial : forall s,
+        rosc_achieved s = false ->
+        is_shockable_state s = true ->
+        shock_count s < 2 ->
+        Allowed s Shock_then_CPR
+    | Allow_Epi_Shockable : forall s,
+        rosc_achieved s = false ->
+        is_shockable_state s = true ->
+        2 <= shock_count s ->
+        epi_due s = true ->
+        Allowed s Give_Epi_during_CPR
+    | Allow_Epi_NonShockable : forall s,
+        rosc_achieved s = false ->
+        is_shockable_state s = false ->
+        epi_due s = true ->
+        Allowed s Give_Epi_during_CPR
+    | Allow_Amio : forall s,
+        rosc_achieved s = false ->
+        is_shockable_state s = true ->
+        3 <= shock_count s ->
+        can_give_amiodarone s = true ->
+        Allowed s Give_Amio_during_CPR
+    | Allow_Lido : forall s,
+        rosc_achieved s = false ->
+        is_shockable_state s = true ->
+        3 <= shock_count s ->
+        can_give_lidocaine s = true ->
+        Allowed s Give_Lido_during_CPR
+    | Allow_Calcium : forall s,
+        rosc_achieved s = false ->
+        needs_calcium s = true ->
+        (is_shockable_state s = false \/ 2 <= shock_count s) ->
+        Allowed s Give_Calcium_during_CPR
+    | Allow_Bicarb : forall s,
+        rosc_achieved s = false ->
+        needs_bicarb s = true ->
+        (is_shockable_state s = false \/ 2 <= shock_count s) ->
+        Allowed s Give_Bicarb_during_CPR
+    | Allow_Mag : forall s,
+        rosc_achieved s = false ->
+        needs_magnesium s = true ->
+        (is_shockable_state s = false \/ 2 <= shock_count s) ->
+        Allowed s Give_Mag_during_CPR
+    | Allow_Lipid : forall s,
+        rosc_achieved s = false ->
+        needs_lipid s = true ->
+        (is_shockable_state s = false \/ 2 <= shock_count s) ->
+        Allowed s Give_Lipid_during_CPR
+    | Allow_CPR_Only : forall s,
+        rosc_achieved s = false ->
+        is_shockable_state s = false ->
+        Allowed s CPR_only
+    | Allow_ECPR : forall s,
+        rosc_achieved s = false ->
+        min_cpr_cycles_for_ecpr <= cpr_cycles s ->
+        Allowed s Consider_ECPR
+    | Allow_CathLab : forall s,
+        rosc_achieved s = true ->
+        Allowed s Activate_Cath_Lab.
+
+  Theorem rosc_recommendation_allowed : forall s,
+    rosc_achieved s = true ->
+    Allowed s (recommend s).
+  Proof.
+    intros s Hrosc.
+    unfold recommend.
+    destruct (is_shockable_state s) eqn:Eshock.
+    - unfold shockable_recommendation. rewrite Hrosc.
+      apply Allow_ROSC. exact Hrosc.
+    - unfold nonshockable_recommendation. rewrite Hrosc.
+      apply Allow_ROSC. exact Hrosc.
+  Qed.
+
+  Theorem shockable_initial_shock_allowed : forall s,
+    rosc_achieved s = false ->
+    is_shockable_state s = true ->
+    shock_count s < 2 ->
+    Allowed s (recommend s).
+  Proof.
+    intros s Hrosc Hshock Hsc.
+    unfold recommend. rewrite Hshock.
+    unfold shockable_recommendation. rewrite Hrosc.
+    assert (shock_count s <? 2 = true) as Hlt.
+    { apply Nat.ltb_lt. exact Hsc. }
+    rewrite Hlt.
+    apply Allow_Shock_Initial; assumption.
+  Qed.
+
+  Theorem nonshockable_cpr_allowed : forall s,
+    rosc_achieved s = false ->
+    is_shockable_state s = false ->
+    needs_lipid s = false ->
+    needs_calcium s = false ->
+    needs_bicarb s = false ->
+    needs_magnesium s = false ->
+    epi_due s = false ->
+    Allowed s (recommend s).
+  Proof.
+    intros s Hrosc Hnonshock Hnlipid Hncalc Hnbicarb Hnmag Hnepi.
+    unfold recommend. rewrite Hnonshock.
+    unfold nonshockable_recommendation. rewrite Hrosc.
+    unfold reversible_cause_recommendation.
+    rewrite Hnlipid, Hncalc, Hnbicarb, Hnmag, Hnepi.
+    apply Allow_CPR_Only; assumption.
+  Qed.
+
+  Definition phase_eqb (p1 p2 : Phase) : bool :=
+    if phase_eq_dec p1 p2 then true else false.
+
+  Definition recommendation_phase_consistent (s : t) (rec : Recommendation) : bool :=
+    match rec with
+    | Shock_then_CPR => phase_allows_shock (current_phase s) ||
+                        phase_eqb (current_phase s) Phase_RhythmCheck ||
+                        (shock_count s <? 2)
+    | Give_Epi_during_CPR | Give_Amio_during_CPR | Give_Lido_during_CPR |
+      Give_Calcium_during_CPR | Give_Bicarb_during_CPR | Give_Mag_during_CPR |
+      Give_Lipid_during_CPR => phase_allows_drugs (current_phase s) ||
+                               phase_eqb (current_phase s) Phase_ShockDecision
+    | CPR_only => phase_allows_cpr (current_phase s) ||
+                  phase_eqb (current_phase s) Phase_DrugWindow
+    | Check_Rhythm => phase_eqb (current_phase s) Phase_CPR_Interval
+    | Consider_ECPR => true
+    | Activate_Cath_Lab => phase_eqb (current_phase s) Phase_PostROSC
+    | ROSC_achieved => true
+    end.
+
+End ACLSSpec.
 
 (******************************************************************************)
 (*                                                                            *)
@@ -2421,6 +2818,330 @@ Module ReversibleCauses.
     end.
 
 End ReversibleCauses.
+
+(******************************************************************************)
+(*                                                                            *)
+(*              SECTION 7A: REVERSIBLE CAUSE TREATMENT DOSING                 *)
+(*                                                                            *)
+(*  Evidence-based dosing protocols for treating reversible causes of         *)
+(*  cardiac arrest (H's and T's) per AHA 2020 and toxicology guidelines.      *)
+(*                                                                            *)
+(******************************************************************************)
+
+Module ReversibleCauseTreatment.
+
+  Import ReversibleCauses.
+
+  Definition calcium_chloride_dose_mg : nat := 1000.
+  Definition calcium_gluconate_dose_mg : nat := 3000.
+  Definition calcium_chloride_concentration_pct : nat := 10.
+  Definition calcium_gluconate_concentration_pct : nat := 10.
+  Definition calcium_chloride_volume_mL : nat := 10.
+  Definition calcium_gluconate_volume_mL : nat := 30.
+  Definition calcium_max_doses : nat := 3.
+  Definition calcium_redose_interval_min : nat := 5.
+
+  Theorem calcium_equivalence :
+    calcium_gluconate_dose_mg = 3 * calcium_chloride_dose_mg.
+  Proof. reflexivity. Qed.
+
+  Definition insulin_regular_dose_units : nat := 10.
+  Definition dextrose_50_dose_g : nat := 25.
+  Definition dextrose_50_volume_mL : nat := 50.
+  Definition insulin_dextrose_onset_min : nat := 15.
+  Definition insulin_dextrose_duration_min : nat := 60.
+
+  Definition sodium_bicarb_dose_mEq_per_kg : nat := 1.
+  Definition sodium_bicarb_concentration_mEq_per_mL_x10 : nat := 8.
+  Definition sodium_bicarb_max_initial_dose_mEq : nat := 50.
+  Definition sodium_bicarb_repeat_interval_min : nat := 10.
+
+  Definition bicarb_volume_for_weight (weight_kg : nat) : nat :=
+    let dose_mEq := weight_kg * sodium_bicarb_dose_mEq_per_kg in
+    let capped_dose := if dose_mEq <=? sodium_bicarb_max_initial_dose_mEq
+                       then dose_mEq
+                       else sodium_bicarb_max_initial_dose_mEq in
+    (capped_dose * 10) / sodium_bicarb_concentration_mEq_per_mL_x10.
+
+  Theorem bicarb_70kg_volume : bicarb_volume_for_weight 70 = 62.
+  Proof. reflexivity. Qed.
+
+  Theorem bicarb_100kg_capped : bicarb_volume_for_weight 100 = 62.
+  Proof. reflexivity. Qed.
+
+  Definition lipid_emulsion_bolus_mL_per_kg_x10 : nat := 15.
+  Definition lipid_emulsion_infusion_mL_per_kg_per_min_x100 : nat := 25.
+  Definition lipid_emulsion_max_total_mL_per_kg : nat := 12.
+  Definition lipid_emulsion_concentration_pct : nat := 20.
+
+  Definition lipid_bolus_volume (weight_kg : nat) : nat :=
+    (weight_kg * lipid_emulsion_bolus_mL_per_kg_x10) / 10.
+
+  Definition lipid_infusion_rate_mL_per_hr (weight_kg : nat) : nat :=
+    (weight_kg * lipid_emulsion_infusion_mL_per_kg_per_min_x100 * 60) / 100.
+
+  Definition lipid_max_volume (weight_kg : nat) : nat :=
+    weight_kg * lipid_emulsion_max_total_mL_per_kg.
+
+  Theorem lipid_bolus_70kg : lipid_bolus_volume 70 = 105.
+  Proof. reflexivity. Qed.
+
+  Theorem lipid_infusion_70kg : lipid_infusion_rate_mL_per_hr 70 = 1050.
+  Proof. reflexivity. Qed.
+
+  Theorem lipid_max_70kg : lipid_max_volume 70 = 840.
+  Proof. reflexivity. Qed.
+
+  Definition magnesium_sulfate_torsades_dose_g : nat := 2.
+  Definition magnesium_sulfate_torsades_dose_mg : nat := 2000.
+  Definition magnesium_sulfate_volume_mL : nat := 4.
+  Definition magnesium_sulfate_concentration_mg_per_mL : nat := 500.
+  Definition magnesium_push_duration_sec : nat := 60.
+  Definition magnesium_max_doses : nat := 1.
+
+  Definition dextrose_50_hypoglycemia_dose_mL : nat := 50.
+  Definition dextrose_50_concentration_pct : nat := 50.
+  Definition dextrose_10_peds_dose_mL_per_kg : nat := 5.
+  Definition glucagon_dose_mg : nat := 1.
+  Definition glucagon_max_dose_mg : nat := 1.
+
+  Definition crystalloid_bolus_mL_per_kg : nat := 20.
+  Definition crystalloid_max_bolus_mL : nat := 2000.
+  Definition blood_transfusion_threshold_hgb_g_dL : nat := 7.
+  Definition massive_transfusion_units : nat := 4.
+
+  Definition fluid_bolus_volume (weight_kg : nat) : nat :=
+    let calc := weight_kg * crystalloid_bolus_mL_per_kg in
+    if calc <=? crystalloid_max_bolus_mL then calc else crystalloid_max_bolus_mL.
+
+  Theorem fluid_bolus_70kg : fluid_bolus_volume 70 = 1400.
+  Proof. reflexivity. Qed.
+
+  Theorem fluid_bolus_120kg_capped : fluid_bolus_volume 120 = 2000.
+  Proof. reflexivity. Qed.
+
+  Definition needle_decompression_site_ics : nat := 2.
+  Definition needle_decompression_site_mcl : bool := true.
+  Definition needle_length_adult_cm : nat := 8.
+  Definition needle_gauge : nat := 14.
+  Definition chest_tube_size_adult_fr : nat := 28.
+
+  Definition pericardiocentesis_volume_diagnostic_mL : nat := 20.
+  Definition pericardiocentesis_ultrasound_guided : bool := true.
+
+  Record HyperkalemiaTreatment : Type := mkHyperKTx {
+    hk_calcium_given : bool;
+    hk_calcium_doses : nat;
+    hk_insulin_dextrose_given : bool;
+    hk_sodium_bicarb_given : bool;
+    hk_bicarb_doses : nat;
+    hk_albuterol_given : bool;
+    hk_dialysis_initiated : bool;
+    hk_potassium_level_x10 : nat
+  }.
+
+  Definition hyperkalemia_treatment_complete (tx : HyperkalemiaTreatment) : bool :=
+    hk_calcium_given tx &&
+    hk_insulin_dextrose_given tx &&
+    (hk_potassium_level_x10 tx <? 60).
+
+  Definition hyperkalemia_needs_dialysis (tx : HyperkalemiaTreatment) : bool :=
+    (70 <=? hk_potassium_level_x10 tx) ||
+    (calcium_max_doses <=? hk_calcium_doses tx) ||
+    negb (hyperkalemia_treatment_complete tx).
+
+  Record AcidosisTreatment : Type := mkAcidTx {
+    acid_bicarb_given : bool;
+    acid_bicarb_doses : nat;
+    acid_ph_x100 : nat;
+    acid_pco2_mmHg : nat;
+    acid_ventilation_optimized : bool
+  }.
+
+  Definition severe_acidosis (tx : AcidosisTreatment) : bool :=
+    acid_ph_x100 tx <? 710.
+
+  Definition metabolic_acidosis (tx : AcidosisTreatment) : bool :=
+    (acid_ph_x100 tx <? 735) && (acid_pco2_mmHg tx <=? 40).
+
+  Definition respiratory_acidosis (tx : AcidosisTreatment) : bool :=
+    (acid_ph_x100 tx <? 735) && (40 <? acid_pco2_mmHg tx).
+
+  Definition bicarb_indicated_for_acidosis (tx : AcidosisTreatment) : bool :=
+    severe_acidosis tx && metabolic_acidosis tx.
+
+  Record ToxinTreatment : Type := mkToxTx {
+    tox_agent_identified : bool;
+    tox_lipid_bolus_given : bool;
+    tox_lipid_infusion_running : bool;
+    tox_lipid_total_mL : nat;
+    tox_antidote_given : bool;
+    tox_decontamination_done : bool;
+    tox_weight_kg : nat
+  }.
+
+  Definition lipid_indicated (tx : ToxinTreatment) : bool :=
+    tox_agent_identified tx &&
+    negb (tox_lipid_bolus_given tx).
+
+  Definition lipid_max_reached (tx : ToxinTreatment) : bool :=
+    lipid_max_volume (tox_weight_kg tx) <=? tox_lipid_total_mL tx.
+
+  Definition can_continue_lipid (tx : ToxinTreatment) : bool :=
+    tox_lipid_bolus_given tx &&
+    negb (lipid_max_reached tx).
+
+  Inductive TreatmentAction : Type :=
+    | TA_GiveCalcium (dose_mg : nat)
+    | TA_GiveInsulinDextrose
+    | TA_GiveSodiumBicarb (dose_mEq : nat)
+    | TA_GiveLipidBolus (volume_mL : nat)
+    | TA_StartLipidInfusion (rate_mL_hr : nat)
+    | TA_GiveMagnesium (dose_mg : nat)
+    | TA_GiveDextrose50 (volume_mL : nat)
+    | TA_GiveFluidBolus (volume_mL : nat)
+    | TA_NeedleDecompression
+    | TA_Pericardiocentesis
+    | TA_InitiateDialysis
+    | TA_GiveAntidote
+    | TA_NoActionNeeded.
+
+  Definition recommend_hyperkalemia_action (tx : HyperkalemiaTreatment) : TreatmentAction :=
+    if negb (hk_calcium_given tx) then TA_GiveCalcium calcium_chloride_dose_mg
+    else if hk_calcium_doses tx <? calcium_max_doses then TA_GiveCalcium calcium_chloride_dose_mg
+    else if negb (hk_insulin_dextrose_given tx) then TA_GiveInsulinDextrose
+    else if negb (hk_sodium_bicarb_given tx) then TA_GiveSodiumBicarb sodium_bicarb_max_initial_dose_mEq
+    else if hyperkalemia_needs_dialysis tx then TA_InitiateDialysis
+    else TA_NoActionNeeded.
+
+  Definition recommend_acidosis_action (tx : AcidosisTreatment) (weight_kg : nat) : TreatmentAction :=
+    if respiratory_acidosis tx && negb (acid_ventilation_optimized tx) then TA_NoActionNeeded
+    else if bicarb_indicated_for_acidosis tx then
+      let dose := weight_kg * sodium_bicarb_dose_mEq_per_kg in
+      TA_GiveSodiumBicarb (if dose <=? sodium_bicarb_max_initial_dose_mEq then dose else sodium_bicarb_max_initial_dose_mEq)
+    else TA_NoActionNeeded.
+
+  Definition recommend_toxin_action (tx : ToxinTreatment) : TreatmentAction :=
+    if lipid_indicated tx then TA_GiveLipidBolus (lipid_bolus_volume (tox_weight_kg tx))
+    else if tox_lipid_bolus_given tx && negb (tox_lipid_infusion_running tx) && negb (lipid_max_reached tx) then
+      TA_StartLipidInfusion (lipid_infusion_rate_mL_per_hr (tox_weight_kg tx))
+    else TA_NoActionNeeded.
+
+  Definition recommend_hypovolemia_action (weight_kg : nat) (fluid_given : bool) : TreatmentAction :=
+    if negb fluid_given then TA_GiveFluidBolus (fluid_bolus_volume weight_kg)
+    else TA_NoActionNeeded.
+
+  Definition recommend_hypoglycemia_action (glucose_given : bool) : TreatmentAction :=
+    if negb glucose_given then TA_GiveDextrose50 dextrose_50_hypoglycemia_dose_mL
+    else TA_NoActionNeeded.
+
+  Definition recommend_tension_pneumo_action (decompressed : bool) : TreatmentAction :=
+    if negb decompressed then TA_NeedleDecompression
+    else TA_NoActionNeeded.
+
+  Definition recommend_tamponade_action (drained : bool) : TreatmentAction :=
+    if negb drained then TA_Pericardiocentesis
+    else TA_NoActionNeeded.
+
+  Definition recommend_torsades_action (mag_given : bool) : TreatmentAction :=
+    if negb mag_given then TA_GiveMagnesium magnesium_sulfate_torsades_dose_mg
+    else TA_NoActionNeeded.
+
+  Theorem calcium_first_for_hyperkalemia : forall tx,
+    hk_calcium_given tx = false ->
+    recommend_hyperkalemia_action tx = TA_GiveCalcium calcium_chloride_dose_mg.
+  Proof.
+    intros tx Hca.
+    unfold recommend_hyperkalemia_action. rewrite Hca. reflexivity.
+  Qed.
+
+  Theorem lipid_bolus_before_infusion : forall tx,
+    tox_agent_identified tx = true ->
+    tox_lipid_bolus_given tx = false ->
+    recommend_toxin_action tx = TA_GiveLipidBolus (lipid_bolus_volume (tox_weight_kg tx)).
+  Proof.
+    intros tx Hid Hbolus.
+    unfold recommend_toxin_action, lipid_indicated.
+    rewrite Hid, Hbolus. reflexivity.
+  Qed.
+
+  Theorem bicarb_only_for_metabolic_acidosis : forall tx w,
+    respiratory_acidosis tx = true ->
+    acid_ventilation_optimized tx = false ->
+    recommend_acidosis_action tx w = TA_NoActionNeeded.
+  Proof.
+    intros tx w Hresp Hvent.
+    unfold recommend_acidosis_action. rewrite Hresp, Hvent. reflexivity.
+  Qed.
+
+  Record CauseTreatmentState : Type := mkCauseTxState {
+    cts_cause : Cause;
+    cts_calcium_doses : nat;
+    cts_bicarb_doses : nat;
+    cts_lipid_given : bool;
+    cts_mag_given : bool;
+    cts_fluid_given : bool;
+    cts_glucose_given : bool;
+    cts_decompressed : bool;
+    cts_drained : bool;
+    cts_weight_kg : nat
+  }.
+
+  Definition recommend_for_cause (cts : CauseTreatmentState) : TreatmentAction :=
+    match cts_cause cts with
+    | H Hyperkalemia =>
+        if cts_calcium_doses cts <? calcium_max_doses
+        then TA_GiveCalcium calcium_chloride_dose_mg
+        else TA_InitiateDialysis
+    | H HydrogenIon =>
+        if cts_bicarb_doses cts <? 3
+        then TA_GiveSodiumBicarb sodium_bicarb_max_initial_dose_mEq
+        else TA_NoActionNeeded
+    | H Hypovolemia => recommend_hypovolemia_action (cts_weight_kg cts) (cts_fluid_given cts)
+    | H Hypoglycemia => recommend_hypoglycemia_action (cts_glucose_given cts)
+    | H Hypoxia => TA_NoActionNeeded
+    | H Hypothermia => TA_NoActionNeeded
+    | H Hypokalemia => TA_NoActionNeeded
+    | T TensionPneumothorax => recommend_tension_pneumo_action (cts_decompressed cts)
+    | T Tamponade => recommend_tamponade_action (cts_drained cts)
+    | T Toxins =>
+        if negb (cts_lipid_given cts)
+        then TA_GiveLipidBolus (lipid_bolus_volume (cts_weight_kg cts))
+        else TA_NoActionNeeded
+    | T ThrombosisCoronary => TA_NoActionNeeded
+    | T ThrombosisPulmonary => TA_NoActionNeeded
+    | T Trauma => TA_NoActionNeeded
+    end.
+
+  Theorem hyperkalemia_gets_calcium : forall cts,
+    cts_cause cts = H Hyperkalemia ->
+    cts_calcium_doses cts = 0 ->
+    recommend_for_cause cts = TA_GiveCalcium calcium_chloride_dose_mg.
+  Proof.
+    intros cts Hcause Hdoses.
+    unfold recommend_for_cause. rewrite Hcause, Hdoses. reflexivity.
+  Qed.
+
+  Theorem tension_pneumo_gets_decompression : forall cts,
+    cts_cause cts = T TensionPneumothorax ->
+    cts_decompressed cts = false ->
+    recommend_for_cause cts = TA_NeedleDecompression.
+  Proof.
+    intros cts Hcause Hdecomp.
+    unfold recommend_for_cause. rewrite Hcause.
+    unfold recommend_tension_pneumo_action. rewrite Hdecomp. reflexivity.
+  Qed.
+
+  Theorem toxin_gets_lipid : forall cts,
+    cts_cause cts = T Toxins ->
+    cts_lipid_given cts = false ->
+    recommend_for_cause cts = TA_GiveLipidBolus (lipid_bolus_volume (cts_weight_kg cts)).
+  Proof.
+    intros cts Hcause Hlipid.
+    unfold recommend_for_cause. rewrite Hcause, Hlipid. reflexivity.
+  Qed.
+
+End ReversibleCauseTreatment.
 
 (******************************************************************************)
 (*                                                                            *)
@@ -3529,6 +4250,7 @@ Module ProtocolSequence.
     | E_CPR_Cycle
     | E_Epinephrine
     | E_Amiodarone (dose : nat)
+    | E_Lidocaine (dose : nat)
     | E_Rhythm_Check (found : Rhythm.t)
     | E_ROSC_Detected.
 
@@ -3538,6 +4260,7 @@ Module ProtocolSequence.
     - destruct (Nat.eq_dec energy energy0); [left; f_equal; assumption | right; intro H; inversion H; contradiction].
     - left; reflexivity.
     - left; reflexivity.
+    - destruct (Nat.eq_dec dose dose0); [left; f_equal; assumption | right; intro H; inversion H; contradiction].
     - destruct (Nat.eq_dec dose dose0); [left; f_equal; assumption | right; intro H; inversion H; contradiction].
     - destruct (Rhythm.eq_dec found found0); [left; f_equal; assumption | right; intro H; inversion H; contradiction].
     - left; reflexivity.
@@ -3551,6 +4274,7 @@ Module ProtocolSequence.
     | E_CPR_Cycle => with_cpr_cycle s
     | E_Epinephrine => with_epinephrine s
     | E_Amiodarone _ => with_amiodarone s
+    | E_Lidocaine _ => with_lidocaine s
     | E_Rhythm_Check r => with_rhythm s r
     | E_ROSC_Detected => with_rosc s
     end.
@@ -3561,15 +4285,42 @@ Module ProtocolSequence.
     | e :: rest => apply_events (apply_event s e) rest
     end.
 
+  Definition shock_energy_valid_for_state (s : AlgorithmState.t) (energy : nat) : bool :=
+    let shock_num := S (shock_count s) in
+    if shock_num =? 1 then
+      (Defibrillation.biphasic_initial_min_J <=? energy) &&
+      (energy <=? Defibrillation.biphasic_initial_max_J)
+    else
+      (Defibrillation.biphasic_initial_min_J <=? energy) &&
+      (energy <=? Defibrillation.biphasic_max_J).
+
+  Definition amiodarone_dose_valid_for_state (s : AlgorithmState.t) (dose : nat) : bool :=
+    if amiodarone_doses s =? 0 then dose =? Medication.amiodarone_first_dose_mg
+    else if amiodarone_doses s =? 1 then dose =? Medication.amiodarone_second_dose_mg
+    else false.
+
+  Definition lidocaine_dose_valid_for_state (s : AlgorithmState.t) (dose : nat) : bool :=
+    let expected := if lidocaine_doses s =? 0
+                    then (Medication.lidocaine_first_dose_mg_per_kg_x10 * patient_weight_kg s) / 10
+                    else (Medication.lidocaine_repeat_dose_mg_per_kg_x10 * patient_weight_kg s) / 10 in
+    (dose =? expected) && (lidocaine_doses s <? 3).
+
+  Definition epi_valid_for_rhythm (s : AlgorithmState.t) : bool :=
+    if is_shockable_state s then
+      (2 <=? shock_count s) && epi_due s
+    else
+      epi_due s.
+
   Definition event_valid_for_state (s : AlgorithmState.t) (e : Event) : bool :=
     if rosc_achieved s then
       match e with E_ROSC_Detected => true | _ => false end
     else
       match e with
-      | E_Shock _ => is_shockable_state s
+      | E_Shock energy => is_shockable_state s && shock_energy_valid_for_state s energy
       | E_CPR_Cycle => true
-      | E_Epinephrine => epi_due s
-      | E_Amiodarone _ => can_give_amiodarone s
+      | E_Epinephrine => epi_valid_for_rhythm s
+      | E_Amiodarone dose => can_give_amiodarone s && amiodarone_dose_valid_for_state s dose
+      | E_Lidocaine dose => can_give_lidocaine s && lidocaine_dose_valid_for_state s dose
       | E_Rhythm_Check _ => true
       | E_ROSC_Detected => true
       end.
@@ -3718,10 +4469,14 @@ Module ProtocolSequence.
       in check_gaps c1 (c2 :: rest)
     end.
 
+  Definition count_lido (events : EventLog) : nat :=
+    length (filter (fun e => match e with E_Lidocaine _ => true | _ => false end) events).
+
   Definition drug_sequence_valid (events : EventLog) : bool :=
     let amio_count := count_amio events in
-    let lido_count := length (filter (fun e => match e with E_Amiodarone _ => false | _ => false end) events) in
+    let lido_count := count_lido events in
     (amio_count <=? 2) &&
+    (lido_count <=? 3) &&
     ((amio_count =? 0) || (lido_count =? 0)).
 
   Theorem escalating_empty : shock_energy_escalating [] = true.
@@ -3831,6 +4586,7 @@ Module Timing.
     let s := state ts in
     mkTimedState
       (AlgorithmState.mkState
+        (AlgorithmState.current_phase s)
         (AlgorithmState.current_rhythm s)
         (AlgorithmState.shock_count s)
         (AlgorithmState.cpr_cycles s)
@@ -3885,6 +4641,592 @@ Module Timing.
   Proof. reflexivity. Qed.
 
 End Timing.
+
+(******************************************************************************)
+(*                                                                            *)
+(*              SECTION 11A: TIME-AWARE EXECUTION SEMANTICS                   *)
+(*                                                                            *)
+(*  Proper time semantics for ACLS execution. Enforces that epi is only       *)
+(*  given at appropriate intervals (q3-5 min) and tracks real time.           *)
+(*                                                                            *)
+(******************************************************************************)
+
+Module TimeSemantics.
+
+  Import AlgorithmState.
+  Import ProtocolSequence.
+
+  Definition epi_min_interval_sec : nat := Medication.epinephrine_interval_min * 60.
+  Definition epi_max_interval_sec : nat := Medication.epinephrine_interval_max * 60.
+
+  Inductive TimedEvent : Type :=
+    | TE_Shock (energy : nat) (at_time : nat)
+    | TE_CPR_Start (at_time : nat)
+    | TE_CPR_End (at_time : nat)
+    | TE_Epinephrine (at_time : nat)
+    | TE_Amiodarone (dose : nat) (at_time : nat)
+    | TE_Lidocaine (dose : nat) (at_time : nat)
+    | TE_Rhythm_Check (found : Rhythm.t) (at_time : nat)
+    | TE_ROSC_Detected (at_time : nat).
+
+  Definition timed_event_time (te : TimedEvent) : nat :=
+    match te with
+    | TE_Shock _ t | TE_CPR_Start t | TE_CPR_End t | TE_Epinephrine t
+    | TE_Amiodarone _ t | TE_Lidocaine _ t | TE_Rhythm_Check _ t
+    | TE_ROSC_Detected t => t
+    end.
+
+  Record TimedExecution : Type := mkTimedExec {
+    te_state : t;
+    te_current_time : nat;
+    te_last_epi_time : option nat;
+    te_cpr_start_time : option nat
+  }.
+
+  Definition initial_timed_execution (r : Rhythm.t) : TimedExecution :=
+    mkTimedExec (initial r) 0 None None.
+
+  Definition apply_timed_event (te : TimedExecution) (ev : TimedEvent) : option TimedExecution :=
+    let event_time := timed_event_time ev in
+    if event_time <? te_current_time te then None
+    else
+      match ev with
+      | TE_Shock energy t =>
+          if is_shockable_state (te_state te) then
+            Some (mkTimedExec (with_shock (te_state te)) t (te_last_epi_time te) (te_cpr_start_time te))
+          else None
+      | TE_CPR_Start t =>
+          Some (mkTimedExec (te_state te) t (te_last_epi_time te) (Some t))
+      | TE_CPR_End t =>
+          match te_cpr_start_time te with
+          | None => None
+          | Some start =>
+              let duration := t - start in
+              if CPR.cycle_duration_sec <=? duration then
+                Some (mkTimedExec (with_cpr_cycle (te_state te)) t (te_last_epi_time te) None)
+              else None
+          end
+      | TE_Epinephrine t =>
+          let epi_ok := match te_last_epi_time te with
+                        | None => true
+                        | Some last => epi_min_interval_sec <=? (t - last)
+                        end in
+          if epi_ok then
+            Some (mkTimedExec (with_epinephrine (te_state te)) t (Some t) (te_cpr_start_time te))
+          else None
+      | TE_Amiodarone dose t =>
+          if can_give_amiodarone (te_state te) then
+            Some (mkTimedExec (with_amiodarone (te_state te)) t (te_last_epi_time te) (te_cpr_start_time te))
+          else None
+      | TE_Lidocaine dose t =>
+          if can_give_lidocaine (te_state te) then
+            Some (mkTimedExec (with_lidocaine (te_state te)) t (te_last_epi_time te) (te_cpr_start_time te))
+          else None
+      | TE_Rhythm_Check r t =>
+          Some (mkTimedExec (with_rhythm (te_state te) r) t (te_last_epi_time te) (te_cpr_start_time te))
+      | TE_ROSC_Detected t =>
+          Some (mkTimedExec (with_rosc (te_state te)) t (te_last_epi_time te) (te_cpr_start_time te))
+      end.
+
+  Fixpoint apply_timed_events (te : TimedExecution) (evs : list TimedEvent) : option TimedExecution :=
+    match evs with
+    | [] => Some te
+    | ev :: rest =>
+        match apply_timed_event te ev with
+        | None => None
+        | Some te' => apply_timed_events te' rest
+        end
+    end.
+
+  Definition events_time_ordered (evs : list TimedEvent) : bool :=
+    let fix check prev l :=
+      match l with
+      | [] => true
+      | ev :: rest =>
+          let t := timed_event_time ev in
+          (prev <=? t) && check t rest
+      end
+    in check 0 evs.
+
+  Definition count_epi_events (evs : list TimedEvent) : nat :=
+    length (filter (fun ev => match ev with TE_Epinephrine _ => true | _ => false end) evs).
+
+  Theorem first_epi_always_valid : forall t,
+    apply_timed_event (initial_timed_execution Rhythm.VF) (TE_Epinephrine t) <> None.
+  Proof.
+    intros t.
+    unfold apply_timed_event, initial_timed_execution. simpl.
+    destruct (t <? 0) eqn:E.
+    - apply Nat.ltb_lt in E. lia.
+    - discriminate.
+  Qed.
+
+  Theorem epi_at_180_after_0_valid :
+    apply_timed_event
+      (mkTimedExec (initial Rhythm.VF) 0 (Some 0) None)
+      (TE_Epinephrine 180) <> None.
+  Proof.
+    unfold apply_timed_event. simpl.
+    unfold epi_min_interval_sec, Medication.epinephrine_interval_min.
+    simpl. discriminate.
+  Qed.
+
+  Theorem epi_at_120_after_0_rejected :
+    apply_timed_event
+      (mkTimedExec (initial Rhythm.VF) 0 (Some 0) None)
+      (TE_Epinephrine 120) = None.
+  Proof.
+    unfold apply_timed_event. simpl.
+    unfold epi_min_interval_sec, Medication.epinephrine_interval_min.
+    simpl. reflexivity.
+  Qed.
+
+  Lemma epi_interval_enforced_aux : forall st curr n cpr_start t te',
+    (if t <? curr then None
+     else (let epi_ok := epi_min_interval_sec <=? t - n in
+           if epi_ok then Some (mkTimedExec (with_epinephrine st) t (Some t) cpr_start) else None))
+    = Some te' ->
+    epi_min_interval_sec <= t - n.
+  Proof.
+    intros st curr n cpr_start t te' H.
+    destruct (t <? curr); [discriminate|].
+    destruct (epi_min_interval_sec <=? t - n) eqn:E.
+    - apply Nat.leb_le. exact E.
+    - discriminate.
+  Qed.
+
+  Theorem epi_interval_enforced : forall te t te',
+    apply_timed_event te (TE_Epinephrine t) = Some te' ->
+    match te_last_epi_time te with
+    | None => True
+    | Some last => epi_min_interval_sec <= t - last
+    end.
+  Proof.
+    intros [st curr last_epi cpr_start] t te' H.
+    destruct last_epi as [n|].
+    - simpl. apply (epi_interval_enforced_aux st curr n cpr_start t te' H).
+    - exact I.
+  Qed.
+
+  Definition epi_timing_specification (last_epi current_time : nat) : Prop :=
+    epi_min_interval_sec <= current_time - last_epi /\
+    current_time - last_epi <= epi_max_interval_sec.
+
+  Theorem epi_180_satisfies_spec :
+    epi_timing_specification 0 180.
+  Proof.
+    unfold epi_timing_specification, epi_min_interval_sec, epi_max_interval_sec,
+           Medication.epinephrine_interval_min, Medication.epinephrine_interval_max.
+    simpl. lia.
+  Qed.
+
+  Theorem epi_300_satisfies_spec :
+    epi_timing_specification 0 300.
+  Proof.
+    unfold epi_timing_specification, epi_min_interval_sec, epi_max_interval_sec,
+           Medication.epinephrine_interval_min, Medication.epinephrine_interval_max.
+    simpl. lia.
+  Qed.
+
+  Theorem epi_120_violates_min :
+    ~ epi_timing_specification 0 120.
+  Proof.
+    unfold epi_timing_specification, epi_min_interval_sec,
+           Medication.epinephrine_interval_min.
+    simpl. lia.
+  Qed.
+
+  Theorem epi_400_violates_max :
+    ~ epi_timing_specification 0 400.
+  Proof.
+    unfold epi_timing_specification, epi_max_interval_sec,
+           Medication.epinephrine_interval_max.
+    simpl. lia.
+  Qed.
+
+End TimeSemantics.
+
+(******************************************************************************)
+(*                                                                            *)
+(*           SECTION 11A': TIME-INTEGRATED DECISION ENGINE                    *)
+(*                                                                            *)
+(*  Integration of time-step semantics into the main Decision engine.         *)
+(*  Enforces epi q3-5min, CPR cycle timing, and provides time-aware           *)
+(*  recommendations that respect all temporal constraints.                    *)
+(*                                                                            *)
+(******************************************************************************)
+
+Module TimedDecision.
+
+  Import AlgorithmState.
+  Import Decision.
+  Import TimeSemantics.
+  Import CPR.
+  Import Medication.
+
+  Record TimedState : Type := mkTimedState {
+    ts_algorithm_state : AlgorithmState.t;
+    ts_current_time_sec : nat;
+    ts_last_epi_time_sec : option nat;
+    ts_last_shock_time_sec : option nat;
+    ts_cpr_start_time_sec : option nat;
+    ts_last_rhythm_check_sec : nat
+  }.
+
+  Definition initial_timed_state (r : Rhythm.t) : TimedState :=
+    mkTimedState (AlgorithmState.initial r) 0 None None None 0.
+
+  Definition epi_min_interval_sec : nat := Medication.epinephrine_interval_min * 60.
+  Definition epi_max_interval_sec : nat := Medication.epinephrine_interval_max * 60.
+  Definition rhythm_check_interval_sec : nat := CPR.cycle_duration_sec.
+  Definition shock_to_cpr_max_delay_sec : nat := 10.
+
+  Definition epi_timing_ok (ts : TimedState) : bool :=
+    match ts_last_epi_time_sec ts with
+    | None => true
+    | Some last => epi_min_interval_sec <=? (ts_current_time_sec ts - last)
+    end.
+
+  Definition epi_overdue (ts : TimedState) : bool :=
+    match ts_last_epi_time_sec ts with
+    | None => false
+    | Some last => epi_max_interval_sec <? (ts_current_time_sec ts - last)
+    end.
+
+  Definition rhythm_check_due (ts : TimedState) : bool :=
+    rhythm_check_interval_sec <=? (ts_current_time_sec ts - ts_last_rhythm_check_sec ts).
+
+  Definition in_cpr_cycle (ts : TimedState) : bool :=
+    match ts_cpr_start_time_sec ts with
+    | None => false
+    | Some start => ts_current_time_sec ts - start <? CPR.cycle_duration_sec
+    end.
+
+  Definition cpr_cycle_complete (ts : TimedState) : bool :=
+    match ts_cpr_start_time_sec ts with
+    | None => false
+    | Some start => CPR.cycle_duration_sec <=? (ts_current_time_sec ts - start)
+    end.
+
+  Inductive TimedRecommendation : Type :=
+    | TR_Action (rec : Recommendation) (timing_valid : bool)
+    | TR_WaitForEpiTiming (seconds_remaining : nat)
+    | TR_RhythmCheckDue
+    | TR_CPRCycleIncomplete (seconds_remaining : nat)
+    | TR_EpiOverdue.
+
+  Definition seconds_until_epi_allowed (ts : TimedState) : nat :=
+    match ts_last_epi_time_sec ts with
+    | None => 0
+    | Some last =>
+        let elapsed := ts_current_time_sec ts - last in
+        if epi_min_interval_sec <=? elapsed then 0
+        else epi_min_interval_sec - elapsed
+    end.
+
+  Definition seconds_until_rhythm_check (ts : TimedState) : nat :=
+    let elapsed := ts_current_time_sec ts - ts_last_rhythm_check_sec ts in
+    if rhythm_check_interval_sec <=? elapsed then 0
+    else rhythm_check_interval_sec - elapsed.
+
+  Definition seconds_remaining_in_cpr (ts : TimedState) : nat :=
+    match ts_cpr_start_time_sec ts with
+    | None => 0
+    | Some start =>
+        let elapsed := ts_current_time_sec ts - start in
+        if CPR.cycle_duration_sec <=? elapsed then 0
+        else CPR.cycle_duration_sec - elapsed
+    end.
+
+  Definition timed_recommend (ts : TimedState) : TimedRecommendation :=
+    let base_rec := Decision.recommend (ts_algorithm_state ts) in
+    if AlgorithmState.rosc_achieved (ts_algorithm_state ts) then
+      TR_Action ROSC_achieved true
+    else if epi_overdue ts then
+      TR_EpiOverdue
+    else if rhythm_check_due ts then
+      TR_RhythmCheckDue
+    else
+      match base_rec with
+      | Give_Epi_during_CPR =>
+          if epi_timing_ok ts then TR_Action Give_Epi_during_CPR true
+          else TR_WaitForEpiTiming (seconds_until_epi_allowed ts)
+      | Shock_then_CPR =>
+          if cpr_cycle_complete ts || negb (in_cpr_cycle ts) then
+            TR_Action Shock_then_CPR true
+          else
+            TR_CPRCycleIncomplete (seconds_remaining_in_cpr ts)
+      | other => TR_Action other true
+      end.
+
+  Definition apply_action (ts : TimedState) (rec : Recommendation) : TimedState :=
+    let s := ts_algorithm_state ts in
+    let t := ts_current_time_sec ts in
+    match rec with
+    | Shock_then_CPR =>
+        mkTimedState (AlgorithmState.with_shock s) t
+          (ts_last_epi_time_sec ts) (Some t) (Some t) t
+    | Give_Epi_during_CPR =>
+        mkTimedState (AlgorithmState.with_epinephrine s) t
+          (Some t) (ts_last_shock_time_sec ts) (ts_cpr_start_time_sec ts)
+          (ts_last_rhythm_check_sec ts)
+    | Give_Amio_during_CPR =>
+        mkTimedState (AlgorithmState.with_amiodarone s) t
+          (ts_last_epi_time_sec ts) (ts_last_shock_time_sec ts)
+          (ts_cpr_start_time_sec ts) (ts_last_rhythm_check_sec ts)
+    | Give_Lido_during_CPR =>
+        mkTimedState (AlgorithmState.with_lidocaine s) t
+          (ts_last_epi_time_sec ts) (ts_last_shock_time_sec ts)
+          (ts_cpr_start_time_sec ts) (ts_last_rhythm_check_sec ts)
+    | Check_Rhythm =>
+        mkTimedState s t (ts_last_epi_time_sec ts) (ts_last_shock_time_sec ts)
+          None t
+    | ROSC_achieved =>
+        mkTimedState (AlgorithmState.with_rosc s) t
+          (ts_last_epi_time_sec ts) (ts_last_shock_time_sec ts)
+          (ts_cpr_start_time_sec ts) (ts_last_rhythm_check_sec ts)
+    | _ => ts
+    end.
+
+  Definition advance_time (ts : TimedState) (delta_sec : nat) : TimedState :=
+    mkTimedState (ts_algorithm_state ts)
+      (ts_current_time_sec ts + delta_sec)
+      (ts_last_epi_time_sec ts)
+      (ts_last_shock_time_sec ts)
+      (ts_cpr_start_time_sec ts)
+      (ts_last_rhythm_check_sec ts).
+
+  Definition complete_cpr_cycle (ts : TimedState) : TimedState :=
+    mkTimedState (AlgorithmState.with_cpr_cycle (ts_algorithm_state ts))
+      (ts_current_time_sec ts)
+      (ts_last_epi_time_sec ts)
+      (ts_last_shock_time_sec ts)
+      None
+      (ts_last_rhythm_check_sec ts).
+
+  Definition start_cpr (ts : TimedState) : TimedState :=
+    mkTimedState (ts_algorithm_state ts)
+      (ts_current_time_sec ts)
+      (ts_last_epi_time_sec ts)
+      (ts_last_shock_time_sec ts)
+      (Some (ts_current_time_sec ts))
+      (ts_last_rhythm_check_sec ts).
+
+  Definition update_rhythm (ts : TimedState) (r : Rhythm.t) : TimedState :=
+    mkTimedState (AlgorithmState.with_rhythm (ts_algorithm_state ts) r)
+      (ts_current_time_sec ts)
+      (ts_last_epi_time_sec ts)
+      (ts_last_shock_time_sec ts)
+      (ts_cpr_start_time_sec ts)
+      (ts_current_time_sec ts).
+
+  Theorem initial_epi_ok : forall r,
+    epi_timing_ok (initial_timed_state r) = true.
+  Proof. reflexivity. Qed.
+
+  Theorem initial_not_overdue : forall r,
+    epi_overdue (initial_timed_state r) = false.
+  Proof. reflexivity. Qed.
+
+  Theorem first_epi_always_allowed : forall ts,
+    ts_last_epi_time_sec ts = None ->
+    epi_timing_ok ts = true.
+  Proof.
+    intros ts Hnone.
+    unfold epi_timing_ok. rewrite Hnone. reflexivity.
+  Qed.
+
+  Theorem epi_at_180_allowed : forall ts last,
+    ts_last_epi_time_sec ts = Some last ->
+    ts_current_time_sec ts - last >= 180 ->
+    epi_timing_ok ts = true.
+  Proof.
+    intros ts last Hlast Hdiff.
+    unfold epi_timing_ok. rewrite Hlast.
+    unfold epi_min_interval_sec, Medication.epinephrine_interval_min.
+    destruct (3 * 60 <=? ts_current_time_sec ts - last) eqn:E.
+    - reflexivity.
+    - apply Nat.leb_nle in E. lia.
+  Qed.
+
+  Lemma epi_min_interval_sec_value : epi_min_interval_sec = 180.
+  Proof.
+    unfold epi_min_interval_sec, Medication.epinephrine_interval_min. reflexivity.
+  Qed.
+
+  Theorem epi_too_soon_blocked : forall ts last,
+    ts_last_epi_time_sec ts = Some last ->
+    ts_current_time_sec ts - last < epi_min_interval_sec ->
+    epi_timing_ok ts = false.
+  Proof.
+    intros ts last Hlast Hdiff.
+    unfold epi_timing_ok. rewrite Hlast.
+    rewrite epi_min_interval_sec_value in *.
+    apply Nat.leb_nle. lia.
+  Qed.
+
+  Theorem rosc_immediate : forall ts,
+    AlgorithmState.rosc_achieved (ts_algorithm_state ts) = true ->
+    timed_recommend ts = TR_Action ROSC_achieved true.
+  Proof.
+    intros ts Hrosc.
+    unfold timed_recommend. rewrite Hrosc. reflexivity.
+  Qed.
+
+  Definition epi_timing_preserved (ts ts' : TimedState) (rec : Recommendation) : Prop :=
+    rec = Give_Epi_during_CPR ->
+    epi_timing_ok ts = true ->
+    ts_last_epi_time_sec ts' = Some (ts_current_time_sec ts).
+
+  Theorem apply_epi_updates_time : forall ts,
+    ts_last_epi_time_sec (apply_action ts Give_Epi_during_CPR) = Some (ts_current_time_sec ts).
+  Proof.
+    intros ts. unfold apply_action. reflexivity.
+  Qed.
+
+  Theorem shock_starts_cpr : forall ts,
+    ts_cpr_start_time_sec (apply_action ts Shock_then_CPR) = Some (ts_current_time_sec ts).
+  Proof.
+    intros ts. unfold apply_action. reflexivity.
+  Qed.
+
+  Definition valid_timed_execution (ts : TimedState) : Prop :=
+    (match ts_last_epi_time_sec ts with
+     | None => True
+     | Some last => last <= ts_current_time_sec ts
+     end) /\
+    (match ts_last_shock_time_sec ts with
+     | None => True
+     | Some last => last <= ts_current_time_sec ts
+     end) /\
+    (match ts_cpr_start_time_sec ts with
+     | None => True
+     | Some start => start <= ts_current_time_sec ts
+     end).
+
+  Theorem initial_valid : forall r,
+    valid_timed_execution (initial_timed_state r).
+  Proof.
+    intros r. unfold valid_timed_execution, initial_timed_state. simpl.
+    repeat split.
+  Qed.
+
+  Theorem advance_preserves_valid : forall ts delta,
+    valid_timed_execution ts ->
+    valid_timed_execution (advance_time ts delta).
+  Proof.
+    intros ts delta [H1 [H2 H3]].
+    unfold valid_timed_execution, advance_time. simpl.
+    repeat split.
+    - destruct (ts_last_epi_time_sec ts); [lia | exact I].
+    - destruct (ts_last_shock_time_sec ts); [lia | exact I].
+    - destruct (ts_cpr_start_time_sec ts); [lia | exact I].
+  Qed.
+
+  Definition rhythm_check_interval_compliant (ts : TimedState) : Prop :=
+    ts_current_time_sec ts - ts_last_rhythm_check_sec ts <= rhythm_check_interval_sec + 30.
+
+  Definition epi_interval_compliant (ts : TimedState) : Prop :=
+    match ts_last_epi_time_sec ts with
+    | None => True
+    | Some last =>
+        epi_min_interval_sec <= ts_current_time_sec ts - last /\
+        ts_current_time_sec ts - last <= epi_max_interval_sec + 60
+    end.
+
+  Record ACLSCompliance : Type := mkCompliance {
+    comp_all_shocks_appropriate : bool;
+    comp_epi_timing_met : bool;
+    comp_cpr_fraction_adequate : bool;
+    comp_rhythm_checks_timely : bool;
+    comp_antiarrhythmic_order_correct : bool
+  }.
+
+  Definition compliance_score (c : ACLSCompliance) : nat :=
+    (if comp_all_shocks_appropriate c then 20 else 0) +
+    (if comp_epi_timing_met c then 20 else 0) +
+    (if comp_cpr_fraction_adequate c then 30 else 0) +
+    (if comp_rhythm_checks_timely c then 15 else 0) +
+    (if comp_antiarrhythmic_order_correct c then 15 else 0).
+
+  Definition full_compliance : ACLSCompliance :=
+    mkCompliance true true true true true.
+
+  Theorem full_compliance_score : compliance_score full_compliance = 100.
+  Proof. reflexivity. Qed.
+
+  Definition partial_compliance : ACLSCompliance :=
+    mkCompliance true true true false false.
+
+  Theorem partial_compliance_score : compliance_score partial_compliance = 70.
+  Proof. reflexivity. Qed.
+
+  Definition evaluate_compliance (ts : TimedState) : ACLSCompliance :=
+    let s := ts_algorithm_state ts in
+    mkCompliance
+      (negb (AlgorithmState.is_shockable_state s) || (0 <? AlgorithmState.shock_count s))
+      (epi_timing_ok ts && negb (epi_overdue ts))
+      true
+      (negb (rhythm_check_due ts) || (ts_current_time_sec ts <? 120))
+      ((AlgorithmState.amiodarone_doses s =? 0) || (AlgorithmState.lidocaine_doses s =? 0)).
+
+  Theorem initial_compliance_VF :
+    compliance_score (evaluate_compliance (initial_timed_state Rhythm.VF)) = 80.
+  Proof.
+    unfold evaluate_compliance, compliance_score, initial_timed_state,
+           epi_timing_ok, epi_overdue, rhythm_check_due, epi_min_interval_sec,
+           epi_max_interval_sec, rhythm_check_interval_sec,
+           Medication.epinephrine_interval_min, Medication.epinephrine_interval_max,
+           CPR.cycle_duration_sec,
+           AlgorithmState.initial, AlgorithmState.is_shockable_state,
+           AlgorithmState.shock_count, AlgorithmState.amiodarone_doses,
+           AlgorithmState.lidocaine_doses, AlgorithmState.rosc_achieved.
+    simpl. reflexivity.
+  Qed.
+
+  Theorem initial_compliance_pVT :
+    compliance_score (evaluate_compliance (initial_timed_state Rhythm.pVT)) = 80.
+  Proof.
+    unfold evaluate_compliance, compliance_score, initial_timed_state,
+           epi_timing_ok, epi_overdue, rhythm_check_due, epi_min_interval_sec,
+           epi_max_interval_sec, rhythm_check_interval_sec,
+           Medication.epinephrine_interval_min, Medication.epinephrine_interval_max,
+           CPR.cycle_duration_sec,
+           AlgorithmState.initial, AlgorithmState.is_shockable_state,
+           AlgorithmState.shock_count, AlgorithmState.amiodarone_doses,
+           AlgorithmState.lidocaine_doses, AlgorithmState.rosc_achieved.
+    simpl. reflexivity.
+  Qed.
+
+  Theorem initial_compliance_PEA :
+    compliance_score (evaluate_compliance (initial_timed_state Rhythm.PEA)) = 100.
+  Proof.
+    unfold evaluate_compliance, compliance_score, initial_timed_state,
+           epi_timing_ok, epi_overdue, rhythm_check_due, epi_min_interval_sec,
+           epi_max_interval_sec, rhythm_check_interval_sec,
+           Medication.epinephrine_interval_min, Medication.epinephrine_interval_max,
+           CPR.cycle_duration_sec,
+           AlgorithmState.initial, AlgorithmState.is_shockable_state,
+           AlgorithmState.shock_count, AlgorithmState.amiodarone_doses,
+           AlgorithmState.lidocaine_doses, AlgorithmState.rosc_achieved.
+    simpl. reflexivity.
+  Qed.
+
+  Theorem initial_compliance_Asystole :
+    compliance_score (evaluate_compliance (initial_timed_state Rhythm.Asystole)) = 100.
+  Proof.
+    unfold evaluate_compliance, compliance_score, initial_timed_state,
+           epi_timing_ok, epi_overdue, rhythm_check_due, epi_min_interval_sec,
+           epi_max_interval_sec, rhythm_check_interval_sec,
+           Medication.epinephrine_interval_min, Medication.epinephrine_interval_max,
+           CPR.cycle_duration_sec,
+           AlgorithmState.initial, AlgorithmState.is_shockable_state,
+           AlgorithmState.shock_count, AlgorithmState.amiodarone_doses,
+           AlgorithmState.lidocaine_doses, AlgorithmState.rosc_achieved.
+    simpl. reflexivity.
+  Qed.
+
+End TimedDecision.
 
 (******************************************************************************)
 (*                                                                            *)
@@ -3990,7 +5332,7 @@ Module TerminationOfResuscitation.
   Definition etco2_indicates_futility (ctx : ResuscitationContext) : bool :=
     match current_etco2 ctx with
     | None => false
-    | Some e => (20 <=? duration_min ctx) && (e <? etco2_futility_threshold_mmHg)
+    | Some e => (standard_resuscitation_duration_min <=? duration_min ctx) && (e <? etco2_futility_threshold_mmHg)
     end.
 
   Definition duration_indicates_futility (ctx : ResuscitationContext) : bool :=
@@ -4125,9 +5467,9 @@ Module TerminationOfResuscitation.
     (if initial_rhythm_shockable_ctx ctx then 3 else 0) +
     (match current_etco2 ctx with
      | None => 0
-     | Some e => if 20 <=? e then 2 else if 10 <=? e then 1 else 0
+     | Some e => if etco2_poor_prognosis_threshold_mmHg <=? e then 2 else if etco2_futility_threshold_mmHg <=? e then 1 else 0
      end) +
-    (if duration_min ctx <? 10 then 2 else if duration_min ctx <? 20 then 1 else 0) +
+    (if duration_min ctx <? etco2_futility_threshold_mmHg then 2 else if duration_min ctx <? standard_resuscitation_duration_min then 1 else 0) +
     (if rosc_achieved s then 5 else 0).
 
   Definition prognosis_favorable (ctx : ResuscitationContext) (s : AlgorithmState.t) : bool :=
@@ -4185,6 +5527,9 @@ Module PostArrestCare.
   Definition target_paco2_min_mmHg : nat := 35.
   Definition target_paco2_max_mmHg : nat := 45.
 
+  Definition glucose_min_mg_dl : nat := 60.
+  Definition glucose_max_mg_dl : nat := 180.
+
   Record PostArrestVitals : Type := mkPostArrestVitals {
     temp_C_x10 : nat;
     map_mmHg : nat;
@@ -4209,10 +5554,10 @@ Module PostArrestCare.
     (paco2_mmHg v <=? target_paco2_max_mmHg).
 
   Definition avoid_hypoglycemia (v : PostArrestVitals) : bool :=
-    60 <=? glucose_mg_dl v.
+    glucose_min_mg_dl <=? glucose_mg_dl v.
 
   Definition avoid_hyperglycemia (v : PostArrestVitals) : bool :=
-    glucose_mg_dl v <=? 180.
+    glucose_mg_dl v <=? glucose_max_mg_dl.
 
   Definition glucose_acceptable (v : PostArrestVitals) : bool :=
     avoid_hypoglycemia v && avoid_hyperglycemia v.
@@ -4390,6 +5735,307 @@ Module PostArrestCare.
   Qed.
 
 End PostArrestCare.
+
+(******************************************************************************)
+(*                                                                            *)
+(*              SECTION 12A': NEUROPROGNOSTICATION (GCS & FOUR)               *)
+(*                                                                            *)
+(*  Glasgow Coma Scale and FOUR Score for post-cardiac arrest                 *)
+(*  neuroprognostication per AHA/ERC 2020 guidelines. Multimodal              *)
+(*  assessment recommended ≥72 hours post-ROSC.                               *)
+(*                                                                            *)
+(******************************************************************************)
+
+Module Neuroprognostication.
+
+  Inductive GCS_Eye : Type :=
+    | Eye_None
+    | Eye_ToPain
+    | Eye_ToVoice
+    | Eye_Spontaneous.
+
+  Inductive GCS_Verbal : Type :=
+    | Verbal_None
+    | Verbal_Incomprehensible
+    | Verbal_Inappropriate
+    | Verbal_Confused
+    | Verbal_Oriented.
+
+  Inductive GCS_Motor : Type :=
+    | Motor_None
+    | Motor_Extension
+    | Motor_Flexion
+    | Motor_Withdrawal
+    | Motor_Localizes
+    | Motor_Obeys.
+
+  Definition gcs_eye_score (e : GCS_Eye) : nat :=
+    match e with
+    | Eye_None => 1
+    | Eye_ToPain => 2
+    | Eye_ToVoice => 3
+    | Eye_Spontaneous => 4
+    end.
+
+  Definition gcs_verbal_score (v : GCS_Verbal) : nat :=
+    match v with
+    | Verbal_None => 1
+    | Verbal_Incomprehensible => 2
+    | Verbal_Inappropriate => 3
+    | Verbal_Confused => 4
+    | Verbal_Oriented => 5
+    end.
+
+  Definition gcs_motor_score (m : GCS_Motor) : nat :=
+    match m with
+    | Motor_None => 1
+    | Motor_Extension => 2
+    | Motor_Flexion => 3
+    | Motor_Withdrawal => 4
+    | Motor_Localizes => 5
+    | Motor_Obeys => 6
+    end.
+
+  Record GCS : Type := mkGCS {
+    gcs_eye : GCS_Eye;
+    gcs_verbal : GCS_Verbal;
+    gcs_motor : GCS_Motor
+  }.
+
+  Definition gcs_total (g : GCS) : nat :=
+    gcs_eye_score (gcs_eye g) +
+    gcs_verbal_score (gcs_verbal g) +
+    gcs_motor_score (gcs_motor g).
+
+  Definition gcs_min : nat := 3.
+  Definition gcs_max : nat := 15.
+
+  Theorem gcs_total_min : forall g, gcs_min <= gcs_total g.
+  Proof.
+    intros g. unfold gcs_total, gcs_min.
+    destruct (gcs_eye g); destruct (gcs_verbal g); destruct (gcs_motor g); simpl; lia.
+  Qed.
+
+  Theorem gcs_total_max : forall g, gcs_total g <= gcs_max.
+  Proof.
+    intros g. unfold gcs_total, gcs_max.
+    destruct (gcs_eye g); destruct (gcs_verbal g); destruct (gcs_motor g); simpl; lia.
+  Qed.
+
+  Inductive GCS_Severity : Type :=
+    | GCS_Severe
+    | GCS_Moderate
+    | GCS_Mild.
+
+  Definition classify_gcs (total : nat) : GCS_Severity :=
+    if total <=? 8 then GCS_Severe
+    else if total <=? 12 then GCS_Moderate
+    else GCS_Mild.
+
+  Definition gcs_3 : GCS := mkGCS Eye_None Verbal_None Motor_None.
+  Definition gcs_15 : GCS := mkGCS Eye_Spontaneous Verbal_Oriented Motor_Obeys.
+  Definition gcs_8 : GCS := mkGCS Eye_ToPain Verbal_Incomprehensible Motor_Withdrawal.
+
+  Theorem gcs_3_total : gcs_total gcs_3 = 3.
+  Proof. reflexivity. Qed.
+
+  Theorem gcs_15_total : gcs_total gcs_15 = 15.
+  Proof. reflexivity. Qed.
+
+  Theorem gcs_3_severe : classify_gcs (gcs_total gcs_3) = GCS_Severe.
+  Proof. reflexivity. Qed.
+
+  Theorem gcs_15_mild : classify_gcs (gcs_total gcs_15) = GCS_Mild.
+  Proof. reflexivity. Qed.
+
+  Definition gcs_motor_only (g : GCS) : nat := gcs_motor_score (gcs_motor g).
+
+  Definition poor_motor_response (g : GCS) : bool :=
+    gcs_motor_score (gcs_motor g) <=? 2.
+
+  Definition absent_pupillary_reflex : bool := true.
+  Definition absent_corneal_reflex : bool := true.
+
+  Record NeuroPredictors : Type := mkNeuroPred {
+    np_gcs_motor : nat;
+    np_absent_pupillary : bool;
+    np_absent_corneal : bool;
+    np_myoclonus_status : bool;
+    np_burst_suppression : bool;
+    np_nse_level_ug_L : nat;
+    np_hours_post_rosc : nat
+  }.
+
+  Definition nse_poor_prognosis_threshold_ug_L : nat := 33.
+  Definition min_hours_for_neuro_assessment : nat := 72.
+
+  Definition assessment_timing_appropriate (np : NeuroPredictors) : bool :=
+    min_hours_for_neuro_assessment <=? np_hours_post_rosc np.
+
+  Definition poor_neuro_prognosis (np : NeuroPredictors) : bool :=
+    assessment_timing_appropriate np &&
+    ((np_gcs_motor np <=? 2) &&
+     (np_absent_pupillary np || np_absent_corneal np) &&
+     (np_myoclonus_status np || np_burst_suppression np ||
+      (nse_poor_prognosis_threshold_ug_L <=? np_nse_level_ug_L np))).
+
+  Definition multimodal_poor_prognosis (np : NeuroPredictors) : bool :=
+    let predictors :=
+      (if np_gcs_motor np <=? 2 then 1 else 0) +
+      (if np_absent_pupillary np then 1 else 0) +
+      (if np_absent_corneal np then 1 else 0) +
+      (if np_myoclonus_status np then 1 else 0) +
+      (if np_burst_suppression np then 1 else 0) +
+      (if nse_poor_prognosis_threshold_ug_L <=? np_nse_level_ug_L np then 1 else 0) in
+    assessment_timing_appropriate np && (3 <=? predictors).
+
+  Inductive NeuroPrognosisCategory : Type :=
+    | NP_LikelyPoor
+    | NP_Indeterminate
+    | NP_LikelyGood.
+
+  Definition categorize_prognosis (np : NeuroPredictors) : NeuroPrognosisCategory :=
+    if negb (assessment_timing_appropriate np) then NP_Indeterminate
+    else if multimodal_poor_prognosis np then NP_LikelyPoor
+    else if (5 <=? np_gcs_motor np) && negb (np_absent_pupillary np) && negb (np_absent_corneal np)
+    then NP_LikelyGood
+    else NP_Indeterminate.
+
+  Definition poor_prognosis_patient : NeuroPredictors :=
+    mkNeuroPred 1 true true true true 60 96.
+
+  Definition good_prognosis_patient : NeuroPredictors :=
+    mkNeuroPred 6 false false false false 10 96.
+
+  Definition early_assessment : NeuroPredictors :=
+    mkNeuroPred 1 true true true true 60 24.
+
+  Theorem poor_prog_is_poor :
+    categorize_prognosis poor_prognosis_patient = NP_LikelyPoor.
+  Proof. reflexivity. Qed.
+
+  Theorem good_prog_is_good :
+    categorize_prognosis good_prognosis_patient = NP_LikelyGood.
+  Proof. reflexivity. Qed.
+
+  Theorem early_is_indeterminate :
+    categorize_prognosis early_assessment = NP_Indeterminate.
+  Proof. reflexivity. Qed.
+
+  Theorem timing_matters : forall np,
+    np_hours_post_rosc np < min_hours_for_neuro_assessment ->
+    categorize_prognosis np = NP_Indeterminate.
+  Proof.
+    intros np H.
+    unfold categorize_prognosis, assessment_timing_appropriate, min_hours_for_neuro_assessment.
+    destruct (72 <=? np_hours_post_rosc np) eqn:E.
+    - apply Nat.leb_le in E. unfold min_hours_for_neuro_assessment in H. lia.
+    - reflexivity.
+  Qed.
+
+  Inductive FOUR_Eye : Type :=
+    | FOUR_Eye_0
+    | FOUR_Eye_1
+    | FOUR_Eye_2
+    | FOUR_Eye_3
+    | FOUR_Eye_4.
+
+  Inductive FOUR_Motor : Type :=
+    | FOUR_Motor_0
+    | FOUR_Motor_1
+    | FOUR_Motor_2
+    | FOUR_Motor_3
+    | FOUR_Motor_4.
+
+  Inductive FOUR_Brainstem : Type :=
+    | FOUR_Brainstem_0
+    | FOUR_Brainstem_1
+    | FOUR_Brainstem_2
+    | FOUR_Brainstem_3
+    | FOUR_Brainstem_4.
+
+  Inductive FOUR_Respiration : Type :=
+    | FOUR_Resp_0
+    | FOUR_Resp_1
+    | FOUR_Resp_2
+    | FOUR_Resp_3
+    | FOUR_Resp_4.
+
+  Definition four_eye_score (e : FOUR_Eye) : nat :=
+    match e with
+    | FOUR_Eye_0 => 0 | FOUR_Eye_1 => 1 | FOUR_Eye_2 => 2
+    | FOUR_Eye_3 => 3 | FOUR_Eye_4 => 4
+    end.
+
+  Definition four_motor_score (m : FOUR_Motor) : nat :=
+    match m with
+    | FOUR_Motor_0 => 0 | FOUR_Motor_1 => 1 | FOUR_Motor_2 => 2
+    | FOUR_Motor_3 => 3 | FOUR_Motor_4 => 4
+    end.
+
+  Definition four_brainstem_score (b : FOUR_Brainstem) : nat :=
+    match b with
+    | FOUR_Brainstem_0 => 0 | FOUR_Brainstem_1 => 1 | FOUR_Brainstem_2 => 2
+    | FOUR_Brainstem_3 => 3 | FOUR_Brainstem_4 => 4
+    end.
+
+  Definition four_resp_score (r : FOUR_Respiration) : nat :=
+    match r with
+    | FOUR_Resp_0 => 0 | FOUR_Resp_1 => 1 | FOUR_Resp_2 => 2
+    | FOUR_Resp_3 => 3 | FOUR_Resp_4 => 4
+    end.
+
+  Record FOUR_Score : Type := mkFOUR {
+    four_eye : FOUR_Eye;
+    four_motor : FOUR_Motor;
+    four_brainstem : FOUR_Brainstem;
+    four_resp : FOUR_Respiration
+  }.
+
+  Definition four_total (f : FOUR_Score) : nat :=
+    four_eye_score (four_eye f) +
+    four_motor_score (four_motor f) +
+    four_brainstem_score (four_brainstem f) +
+    four_resp_score (four_resp f).
+
+  Definition four_min : nat := 0.
+  Definition four_max : nat := 16.
+
+  Theorem four_total_min : forall f, four_min <= four_total f.
+  Proof. intros f. unfold four_min. lia. Qed.
+
+  Theorem four_total_max : forall f, four_total f <= four_max.
+  Proof.
+    intros f. unfold four_total, four_max.
+    destruct (four_eye f); destruct (four_motor f);
+    destruct (four_brainstem f); destruct (four_resp f); simpl; lia.
+  Qed.
+
+  Definition four_0 : FOUR_Score :=
+    mkFOUR FOUR_Eye_0 FOUR_Motor_0 FOUR_Brainstem_0 FOUR_Resp_0.
+
+  Definition four_16 : FOUR_Score :=
+    mkFOUR FOUR_Eye_4 FOUR_Motor_4 FOUR_Brainstem_4 FOUR_Resp_4.
+
+  Theorem four_0_total : four_total four_0 = 0.
+  Proof. reflexivity. Qed.
+
+  Theorem four_16_total : four_total four_16 = 16.
+  Proof. reflexivity. Qed.
+
+  Definition four_indicates_brain_death (f : FOUR_Score) : bool :=
+    (four_eye_score (four_eye f) =? 0) &&
+    (four_motor_score (four_motor f) =? 0) &&
+    (four_brainstem_score (four_brainstem f) =? 0) &&
+    (four_resp_score (four_resp f) =? 0).
+
+  Theorem four_0_brain_death : four_indicates_brain_death four_0 = true.
+  Proof. reflexivity. Qed.
+
+  Theorem four_16_not_brain_death : four_indicates_brain_death four_16 = false.
+  Proof. reflexivity. Qed.
+
+End Neuroprognostication.
 
 (******************************************************************************)
 (*                                                                            *)
@@ -4655,6 +6301,278 @@ Module DrugInteractions.
   Qed.
 
 End DrugInteractions.
+
+(******************************************************************************)
+(*                                                                            *)
+(*          SECTION 12C': TACHYCARDIA WITH PULSE (SUPPLEMENTARY)              *)
+(*                                                                            *)
+(*  SVT and stable tachycardia management per AHA 2020. Not part of cardiac   *)
+(*  arrest algorithm, but included for completeness of ACLS coverage.         *)
+(*                                                                            *)
+(******************************************************************************)
+
+Module TachycardiaWithPulse.
+
+  Inductive TachyType : Type :=
+    | NarrowRegular
+    | NarrowIrregular
+    | WideRegular
+    | WideIrregular.
+
+  Definition tachy_type_eq_dec : forall t1 t2 : TachyType, {t1 = t2} + {t1 <> t2}.
+  Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
+
+  Definition qrs_narrow_threshold_ms : nat := 120.
+  Definition tachy_hr_threshold : nat := 150.
+
+  Definition classify_tachycardia (qrs_ms : nat) (regular : bool) : TachyType :=
+    if qrs_ms <? qrs_narrow_threshold_ms then
+      if regular then NarrowRegular else NarrowIrregular
+    else
+      if regular then WideRegular else WideIrregular.
+
+  Inductive TachyStability : Type :=
+    | Stable
+    | Unstable_Hypotension
+    | Unstable_AMS
+    | Unstable_ChestPain
+    | Unstable_CHF.
+
+  Definition is_unstable (s : TachyStability) : bool :=
+    match s with
+    | Stable => false
+    | _ => true
+    end.
+
+  Inductive TachyIntervention : Type :=
+    | TI_SynchronizedCardioversion
+    | TI_VagalManeuvers
+    | TI_Adenosine
+    | TI_BetaBlockerOrCCB
+    | TI_Amiodarone
+    | TI_ExpertConsult
+    | TI_RateControl.
+
+  Definition tachy_recommendation (tt : TachyType) (stab : TachyStability) : TachyIntervention :=
+    if is_unstable stab then TI_SynchronizedCardioversion
+    else match tt with
+         | NarrowRegular => TI_VagalManeuvers
+         | NarrowIrregular => TI_RateControl
+         | WideRegular => TI_Adenosine
+         | WideIrregular => TI_ExpertConsult
+         end.
+
+  Definition adenosine_first_dose_mg : nat := 6.
+  Definition adenosine_second_dose_mg : nat := 12.
+  Definition adenosine_third_dose_mg : nat := 12.
+  Definition adenosine_rapid_flush_required : bool := true.
+
+  Definition cardioversion_energy_narrow_J : nat := 50.
+  Definition cardioversion_energy_wide_J : nat := 100.
+
+  Definition cardioversion_energy (tt : TachyType) : nat :=
+    match tt with
+    | NarrowRegular | NarrowIrregular => cardioversion_energy_narrow_J
+    | WideRegular | WideIrregular => cardioversion_energy_wide_J
+    end.
+
+  Record TachyPatient : Type := mkTachyPatient {
+    tp_hr : nat;
+    tp_qrs_ms : nat;
+    tp_regular : bool;
+    tp_stability : TachyStability;
+    tp_adenosine_doses : nat;
+    tp_accessory_pathway_known : bool
+  }.
+
+  Definition vagal_maneuvers_appropriate (p : TachyPatient) : bool :=
+    negb (is_unstable (tp_stability p)) &&
+    (tp_qrs_ms p <? qrs_narrow_threshold_ms) &&
+    tp_regular p.
+
+  Definition adenosine_appropriate (p : TachyPatient) : bool :=
+    negb (is_unstable (tp_stability p)) &&
+    negb (tp_accessory_pathway_known p) &&
+    (tp_adenosine_doses p <? 3) &&
+    (tp_regular p).
+
+  Definition adenosine_dose_for_patient (p : TachyPatient) : nat :=
+    match tp_adenosine_doses p with
+    | 0 => adenosine_first_dose_mg
+    | 1 => adenosine_second_dose_mg
+    | _ => adenosine_third_dose_mg
+    end.
+
+  Definition afib_rate_control_target_hr : nat := 110.
+
+  Definition afib_rate_controlled (hr : nat) : bool :=
+    hr <=? afib_rate_control_target_hr.
+
+  Theorem unstable_gets_cardioversion : forall tt,
+    tachy_recommendation tt Unstable_Hypotension = TI_SynchronizedCardioversion.
+  Proof. intros []; reflexivity. Qed.
+
+  Theorem narrow_regular_stable_vagal :
+    tachy_recommendation NarrowRegular Stable = TI_VagalManeuvers.
+  Proof. reflexivity. Qed.
+
+  Theorem wide_regular_stable_adenosine :
+    tachy_recommendation WideRegular Stable = TI_Adenosine.
+  Proof. reflexivity. Qed.
+
+  Theorem cardioversion_narrow_50J :
+    cardioversion_energy NarrowRegular = 50.
+  Proof. reflexivity. Qed.
+
+  Theorem cardioversion_wide_100J :
+    cardioversion_energy WideRegular = 100.
+  Proof. reflexivity. Qed.
+
+  Definition svt_patient : TachyPatient :=
+    mkTachyPatient 180 90 true Stable 0 false.
+
+  Definition afib_rvr_patient : TachyPatient :=
+    mkTachyPatient 160 100 false Stable 0 false.
+
+  Definition unstable_vt_patient : TachyPatient :=
+    mkTachyPatient 200 160 true Unstable_Hypotension 0 false.
+
+  Theorem svt_vagal_appropriate :
+    vagal_maneuvers_appropriate svt_patient = true.
+  Proof. reflexivity. Qed.
+
+  Theorem svt_adenosine_appropriate :
+    adenosine_appropriate svt_patient = true.
+  Proof. reflexivity. Qed.
+
+  Theorem afib_no_vagal :
+    vagal_maneuvers_appropriate afib_rvr_patient = false.
+  Proof. reflexivity. Qed.
+
+  Theorem unstable_no_adenosine :
+    adenosine_appropriate unstable_vt_patient = false.
+  Proof. reflexivity. Qed.
+
+End TachycardiaWithPulse.
+
+(******************************************************************************)
+(*                                                                            *)
+(*          SECTION 12C'': BRADYCARDIA WITH PULSE (SUPPLEMENTARY)             *)
+(*                                                                            *)
+(*  Symptomatic bradycardia management per AHA 2020. Not part of cardiac      *)
+(*  arrest algorithm, but included for completeness of ACLS coverage.         *)
+(*                                                                            *)
+(******************************************************************************)
+
+Module BradycardiaWithPulse.
+
+  Inductive BradyType : Type :=
+    | Sinus_Brady
+    | First_Degree_AVB
+    | Second_Degree_Type1
+    | Second_Degree_Type2
+    | Third_Degree_AVB
+    | Junctional.
+
+  Definition brady_type_eq_dec : forall b1 b2 : BradyType, {b1 = b2} + {b1 <> b2}.
+  Proof. intros [] []; (left; reflexivity) || (right; discriminate). Defined.
+
+  Definition brady_hr_threshold : nat := 50.
+
+  Definition high_grade_block (bt : BradyType) : bool :=
+    match bt with
+    | Second_Degree_Type2 | Third_Degree_AVB => true
+    | _ => false
+    end.
+
+  Definition atropine_likely_effective (bt : BradyType) : bool :=
+    match bt with
+    | Sinus_Brady | First_Degree_AVB | Second_Degree_Type1 | Junctional => true
+    | Second_Degree_Type2 | Third_Degree_AVB => false
+    end.
+
+  Inductive BradyIntervention : Type :=
+    | BI_Observation
+    | BI_Atropine
+    | BI_TranscutaneousPacing
+    | BI_Dopamine
+    | BI_Epinephrine
+    | BI_TransvenousPacing.
+
+  Record BradyPatient : Type := mkBradyPatient {
+    bp_hr : nat;
+    bp_type : BradyType;
+    bp_symptomatic : bool;
+    bp_atropine_doses : nat;
+    bp_transplant_heart : bool
+  }.
+
+  Definition atropine_dose_mg_x10 : nat := 5.
+  Definition atropine_max_doses : nat := 6.
+  Definition atropine_max_total_mg_x10 : nat := 30.
+
+  Definition atropine_appropriate (p : BradyPatient) : bool :=
+    bp_symptomatic p &&
+    negb (bp_transplant_heart p) &&
+    atropine_likely_effective (bp_type p) &&
+    (bp_atropine_doses p <? atropine_max_doses).
+
+  Definition pacing_indicated (p : BradyPatient) : bool :=
+    bp_symptomatic p &&
+    (high_grade_block (bp_type p) || (3 <=? bp_atropine_doses p)).
+
+  Definition brady_recommendation (p : BradyPatient) : BradyIntervention :=
+    if negb (bp_symptomatic p) then BI_Observation
+    else if pacing_indicated p then BI_TranscutaneousPacing
+    else if atropine_appropriate p then BI_Atropine
+    else BI_Dopamine.
+
+  Definition dopamine_brady_dose_mcg_per_kg_per_min_min : nat := 5.
+  Definition dopamine_brady_dose_mcg_per_kg_per_min_max : nat := 20.
+
+  Definition epi_brady_dose_mcg_per_min_min : nat := 2.
+  Definition epi_brady_dose_mcg_per_min_max : nat := 10.
+
+  Theorem asymptomatic_observation : forall p,
+    bp_symptomatic p = false ->
+    brady_recommendation p = BI_Observation.
+  Proof.
+    intros p Hasym.
+    unfold brady_recommendation. rewrite Hasym. reflexivity.
+  Qed.
+
+  Theorem third_degree_pacing : forall p,
+    bp_symptomatic p = true ->
+    bp_type p = Third_Degree_AVB ->
+    brady_recommendation p = BI_TranscutaneousPacing.
+  Proof.
+    intros p Hsym Htype.
+    unfold brady_recommendation, pacing_indicated, high_grade_block.
+    rewrite Hsym, Htype. reflexivity.
+  Qed.
+
+  Definition symptomatic_sinus_brady : BradyPatient :=
+    mkBradyPatient 40 Sinus_Brady true 0 false.
+
+  Definition complete_hb_patient : BradyPatient :=
+    mkBradyPatient 35 Third_Degree_AVB true 0 false.
+
+  Definition transplant_brady : BradyPatient :=
+    mkBradyPatient 45 Sinus_Brady true 0 true.
+
+  Theorem sinus_brady_gets_atropine :
+    brady_recommendation symptomatic_sinus_brady = BI_Atropine.
+  Proof. reflexivity. Qed.
+
+  Theorem chb_gets_pacing :
+    brady_recommendation complete_hb_patient = BI_TranscutaneousPacing.
+  Proof. reflexivity. Qed.
+
+  Theorem transplant_no_atropine :
+    atropine_appropriate transplant_brady = false.
+  Proof. reflexivity. Qed.
+
+End BradycardiaWithPulse.
 
 (******************************************************************************)
 (*                                                                            *)
@@ -5094,7 +7012,221 @@ End NegativeSpecs.
 
 (******************************************************************************)
 (*                                                                            *)
-(*                      SECTION 15: MAIN RESULTS                              *)
+(*                   SECTION 15: STATE INVARIANTS                             *)
+(*                                                                            *)
+(*  Formal state invariants and preservation proofs. These ensure that        *)
+(*  valid event sequences maintain protocol compliance.                       *)
+(*                                                                            *)
+(******************************************************************************)
+
+Module StateInvariants.
+
+  Import AlgorithmState.
+  Import ProtocolSequence.
+
+  Definition amio_dose_invariant (s : t) : bool :=
+    amiodarone_doses s <=? 2.
+
+  Definition lido_dose_invariant (s : t) : bool :=
+    lidocaine_doses s <=? 3.
+
+  Definition antiarrhythmic_exclusion_invariant (s : t) : bool :=
+    (amiodarone_doses s =? 0) || (lidocaine_doses s =? 0).
+
+  Definition state_invariant (s : t) : bool :=
+    amio_dose_invariant s &&
+    lido_dose_invariant s &&
+    antiarrhythmic_exclusion_invariant s.
+
+  Theorem initial_state_satisfies_invariant : forall r,
+    state_invariant (initial r) = true.
+  Proof.
+    intros r. unfold state_invariant, amio_dose_invariant, lido_dose_invariant,
+    antiarrhythmic_exclusion_invariant, initial. simpl. reflexivity.
+  Qed.
+
+  Theorem valid_amio_event_preserves_amio_invariant : forall s dose,
+    amio_dose_invariant s = true ->
+    amiodarone_dose_valid_for_state s dose = true ->
+    amio_dose_invariant (with_amiodarone s) = true.
+  Proof.
+    intros s dose Hinv Hvalid.
+    unfold amio_dose_invariant in *.
+    unfold amiodarone_dose_valid_for_state in Hvalid.
+    unfold with_amiodarone. simpl.
+    apply Nat.leb_le in Hinv.
+    destruct (amiodarone_doses s =? 0) eqn:E0.
+    - apply Nat.eqb_eq in E0. rewrite E0. simpl. reflexivity.
+    - destruct (amiodarone_doses s =? 1) eqn:E1.
+      + apply Nat.eqb_eq in E1. rewrite E1. simpl. reflexivity.
+      + discriminate Hvalid.
+  Qed.
+
+  Theorem valid_lido_event_preserves_lido_invariant : forall s dose,
+    lido_dose_invariant s = true ->
+    lidocaine_dose_valid_for_state s dose = true ->
+    lido_dose_invariant (with_lidocaine s) = true.
+  Proof.
+    intros s dose Hinv Hvalid.
+    unfold lido_dose_invariant in *.
+    unfold lidocaine_dose_valid_for_state in Hvalid.
+    unfold with_lidocaine. simpl.
+    apply Nat.leb_le in Hinv.
+    apply andb_true_iff in Hvalid. destruct Hvalid as [_ Hlt].
+    apply Nat.ltb_lt in Hlt.
+    apply Nat.leb_le. lia.
+  Qed.
+
+  Theorem valid_amio_preserves_exclusion : forall s,
+    antiarrhythmic_exclusion_invariant s = true ->
+    can_give_amiodarone s = true ->
+    antiarrhythmic_exclusion_invariant (with_amiodarone s) = true.
+  Proof.
+    intros s Hexcl Hcan.
+    unfold antiarrhythmic_exclusion_invariant in *.
+    unfold can_give_amiodarone in Hcan.
+    unfold with_amiodarone. simpl.
+    apply andb_true_iff in Hcan. destruct Hcan as [_ Hlido0].
+    apply Nat.eqb_eq in Hlido0. rewrite Hlido0. reflexivity.
+  Qed.
+
+  Theorem valid_lido_preserves_exclusion : forall s,
+    antiarrhythmic_exclusion_invariant s = true ->
+    can_give_lidocaine s = true ->
+    antiarrhythmic_exclusion_invariant (with_lidocaine s) = true.
+  Proof.
+    intros s Hexcl Hcan.
+    unfold antiarrhythmic_exclusion_invariant in *.
+    unfold can_give_lidocaine in Hcan.
+    unfold with_lidocaine. simpl.
+    repeat (apply andb_true_iff in Hcan; destruct Hcan as [Hcan ?]).
+    apply Nat.eqb_eq in H1. rewrite H1. reflexivity.
+  Qed.
+
+  Theorem cpr_cycle_preserves_invariant : forall s,
+    state_invariant s = true ->
+    state_invariant (with_cpr_cycle s) = true.
+  Proof.
+    intros s Hinv.
+    unfold state_invariant, amio_dose_invariant, lido_dose_invariant,
+    antiarrhythmic_exclusion_invariant in *.
+    unfold with_cpr_cycle. simpl.
+    exact Hinv.
+  Qed.
+
+  Theorem shock_preserves_invariant : forall s,
+    state_invariant s = true ->
+    state_invariant (with_shock s) = true.
+  Proof.
+    intros s Hinv.
+    unfold state_invariant, amio_dose_invariant, lido_dose_invariant,
+    antiarrhythmic_exclusion_invariant in *.
+    unfold with_shock. simpl.
+    exact Hinv.
+  Qed.
+
+  Theorem epi_preserves_invariant : forall s,
+    state_invariant s = true ->
+    state_invariant (with_epinephrine s) = true.
+  Proof.
+    intros s Hinv.
+    unfold state_invariant, amio_dose_invariant, lido_dose_invariant,
+    antiarrhythmic_exclusion_invariant in *.
+    unfold with_epinephrine. simpl.
+    exact Hinv.
+  Qed.
+
+  Theorem rhythm_check_preserves_invariant : forall s r,
+    state_invariant s = true ->
+    state_invariant (with_rhythm s r) = true.
+  Proof.
+    intros s r Hinv.
+    unfold state_invariant, amio_dose_invariant, lido_dose_invariant,
+    antiarrhythmic_exclusion_invariant in *.
+    unfold with_rhythm. simpl.
+    exact Hinv.
+  Qed.
+
+  Theorem rosc_preserves_invariant : forall s,
+    state_invariant s = true ->
+    state_invariant (with_rosc s) = true.
+  Proof.
+    intros s Hinv.
+    unfold state_invariant, amio_dose_invariant, lido_dose_invariant,
+    antiarrhythmic_exclusion_invariant in *.
+    unfold with_rosc. simpl.
+    exact Hinv.
+  Qed.
+
+  Theorem valid_event_preserves_invariant : forall s e,
+    state_invariant s = true ->
+    event_valid_for_state s e = true ->
+    state_invariant (apply_event s e) = true.
+  Proof.
+    intros s e Hinv Hvalid.
+    unfold event_valid_for_state in Hvalid.
+    destruct (rosc_achieved s) eqn:Erosc.
+    - destruct e; try discriminate Hvalid.
+      simpl. apply rosc_preserves_invariant. exact Hinv.
+    - destruct e.
+      + simpl. apply shock_preserves_invariant. exact Hinv.
+      + simpl. apply cpr_cycle_preserves_invariant. exact Hinv.
+      + simpl. apply epi_preserves_invariant. exact Hinv.
+      + simpl.
+        unfold state_invariant in *.
+        apply andb_true_iff in Hinv. destruct Hinv as [Hinv1 Hexcl].
+        apply andb_true_iff in Hinv1. destruct Hinv1 as [Hamio Hlido].
+        apply andb_true_iff in Hvalid. destruct Hvalid as [Hcan Hdose].
+        apply andb_true_iff. split.
+        * apply andb_true_iff. split.
+          -- apply valid_amio_event_preserves_amio_invariant with (dose := dose); assumption.
+          -- unfold lido_dose_invariant. unfold with_amiodarone. simpl. exact Hlido.
+        * apply valid_amio_preserves_exclusion; assumption.
+      + simpl.
+        unfold state_invariant in *.
+        apply andb_true_iff in Hinv. destruct Hinv as [Hinv1 Hexcl].
+        apply andb_true_iff in Hinv1. destruct Hinv1 as [Hamio Hlido].
+        apply andb_true_iff in Hvalid. destruct Hvalid as [Hcan Hdose].
+        apply andb_true_iff. split.
+        * apply andb_true_iff. split.
+          -- unfold amio_dose_invariant. unfold with_lidocaine. simpl. exact Hamio.
+          -- apply valid_lido_event_preserves_lido_invariant with (dose := dose); assumption.
+        * apply valid_lido_preserves_exclusion; assumption.
+      + simpl. apply rhythm_check_preserves_invariant. exact Hinv.
+      + simpl. apply rosc_preserves_invariant. exact Hinv.
+  Qed.
+
+  Theorem valid_sequence_preserves_invariant : forall events s,
+    state_invariant s = true ->
+    sequence_valid s events = true ->
+    state_invariant (apply_events s events) = true.
+  Proof.
+    induction events as [|e rest IH].
+    - intros s Hinv _. simpl. exact Hinv.
+    - intros s Hinv Hseq.
+      simpl in Hseq. apply andb_true_iff in Hseq. destruct Hseq as [Hvalid Hrest].
+      simpl. apply IH.
+      + apply valid_event_preserves_invariant; assumption.
+      + exact Hrest.
+  Qed.
+
+  Theorem antiarrhythmic_mutual_exclusion_maintained : forall events s,
+    state_invariant s = true ->
+    sequence_valid s events = true ->
+    antiarrhythmic_exclusion_invariant (apply_events s events) = true.
+  Proof.
+    intros events s Hinv Hseq.
+    assert (H := valid_sequence_preserves_invariant events s Hinv Hseq).
+    unfold state_invariant in H.
+    apply andb_true_iff in H. destruct H as [_ Hexcl].
+    exact Hexcl.
+  Qed.
+
+End StateInvariants.
+
+(******************************************************************************)
+(*                                                                            *)
+(*                      SECTION 16: MAIN RESULTS                              *)
 (*                                                                            *)
 (*  Summary theorems establishing correctness of the ACLS algorithm.          *)
 (*                                                                            *)
@@ -5307,20 +7439,31 @@ Module MainResults.
     - intros s. destruct (AlgorithmState.is_shockable_state s); auto.
   Qed.
 
-  Theorem drug_interaction_safety :
-    forall s, DrugInteractions.antiarrhythmic_mutually_exclusive s = true \/
-              (AlgorithmState.amiodarone_doses s > 0 /\ AlgorithmState.lidocaine_doses s > 0).
+  Theorem drug_interaction_safety_for_valid_sequences :
+    forall r events,
+    ProtocolSequence.sequence_valid (AlgorithmState.initial r) events = true ->
+    StateInvariants.antiarrhythmic_exclusion_invariant
+      (ProtocolSequence.apply_events (AlgorithmState.initial r) events) = true.
   Proof.
-    intros s.
-    unfold DrugInteractions.antiarrhythmic_mutually_exclusive.
-    destruct (AlgorithmState.amiodarone_doses s =? 0) eqn:E1.
-    - left. reflexivity.
-    - destruct (AlgorithmState.lidocaine_doses s =? 0) eqn:E2.
-      + left. apply orb_true_r.
-      + right.
-        apply Nat.eqb_neq in E1.
-        apply Nat.eqb_neq in E2.
-        split; lia.
+    intros r events Hseq.
+    apply StateInvariants.antiarrhythmic_mutual_exclusion_maintained.
+    - apply StateInvariants.initial_state_satisfies_invariant.
+    - exact Hseq.
+  Qed.
+
+  Theorem valid_sequences_never_mix_antiarrhythmics :
+    forall r events,
+    ProtocolSequence.sequence_valid (AlgorithmState.initial r) events = true ->
+    let final := ProtocolSequence.apply_events (AlgorithmState.initial r) events in
+    AlgorithmState.amiodarone_doses final = 0 \/
+    AlgorithmState.lidocaine_doses final = 0.
+  Proof.
+    intros r events Hseq final.
+    assert (H := drug_interaction_safety_for_valid_sequences r events Hseq).
+    unfold StateInvariants.antiarrhythmic_exclusion_invariant in H.
+    apply orb_true_iff in H. destruct H as [H|H].
+    - left. apply Nat.eqb_eq in H. exact H.
+    - right. apply Nat.eqb_eq in H. exact H.
   Qed.
 
 End MainResults.
@@ -5544,6 +7687,9 @@ Module HospitalMedicationAvailability.
     | CalciumGluconate => form_calcium_gluconate f
     | SodiumBicarbonate => form_sodium_bicarbonate f
     | LipidEmulsion => form_lipid_emulsion f
+    | Vasopressin => form_vasopressin f
+    | Atropine => form_atropine f
+    | Adenosine => form_adenosine f
     end.
 
   Definition default_formulary_for_facility (ft : FacilityType) : HospitalFormulary :=
@@ -5739,3 +7885,238 @@ Module HospitalMedicationAvailability.
 
 End HospitalMedicationAvailability.
 
+(******************************************************************************)
+(*                                                                            *)
+(*                   SECTION 17: CODE EXTRACTION                              *)
+(*                                                                            *)
+(*  OCaml code extraction for clinical decision support integration.          *)
+(*  Extracts all decision functions, state management, and safety checks.     *)
+(*                                                                            *)
+(******************************************************************************)
+
+Require Extraction.
+Require Import ExtrOcamlBasic.
+Require Import ExtrOcamlNatInt.
+Require Import ExtrOcamlString.
+
+Extraction Language OCaml.
+
+Extract Inductive bool => "bool" [ "true" "false" ].
+Extract Inductive option => "option" [ "Some" "None" ].
+Extract Inductive list => "list" [ "[]" "(::)" ].
+Extract Inductive nat => "int" [ "0" "succ" ] "(fun fO fS n -> if n=0 then fO () else fS (n-1))".
+
+Extract Constant Nat.add => "(+)".
+Extract Constant Nat.mul => "( * )".
+Extract Constant Nat.sub => "(fun n m -> max 0 (n-m))".
+Extract Constant Nat.leb => "(<=)".
+Extract Constant Nat.ltb => "(<)".
+Extract Constant Nat.eqb => "(=)".
+
+Extraction "cardiac_arrest.ml"
+  Rhythm.t
+  Rhythm.shockable
+  Rhythm.eq_dec
+  CPR.min_rate_per_min
+  CPR.max_rate_per_min
+  CPR.min_depth_cm
+  CPR.max_depth_cm
+  CPR.cycle_duration_sec
+  CPR.rate_adequate
+  CPR.depth_adequate
+  CPR.quality_adequate
+  CPR.etco2_rosc_threshold
+  CPR.etco2_suggests_rosc_during_cpr
+  CPR.assess_cpr_quality_by_etco2
+  Medication.Drug
+  Medication.epinephrine_dose_mg
+  Medication.amiodarone_first_dose_mg
+  Medication.amiodarone_second_dose_mg
+  Medication.epinephrine_interval_min
+  Medication.epinephrine_interval_max
+  Medication.PediatricPatient
+  Medication.epinephrine_peds_dose_mcg
+  Medication.defibrillation_peds_initial
+  Medication.defibrillation_peds_subsequent
+  Medication.peds_dose_valid_epi
+  Medication.peds_dose_valid_amio
+  AlgorithmState.t
+  AlgorithmState.initial
+  AlgorithmState.initial_with_weight
+  AlgorithmState.is_shockable_state
+  AlgorithmState.epi_due
+  AlgorithmState.can_give_amiodarone
+  AlgorithmState.can_give_lidocaine
+  AlgorithmState.needs_lipid
+  AlgorithmState.needs_calcium
+  AlgorithmState.needs_bicarb
+  AlgorithmState.needs_magnesium
+  AlgorithmState.has_hyperkalemia
+  AlgorithmState.has_acidosis
+  AlgorithmState.with_shock
+  AlgorithmState.with_cpr_cycle
+  AlgorithmState.with_epinephrine
+  AlgorithmState.with_amiodarone
+  AlgorithmState.with_lidocaine
+  AlgorithmState.with_rhythm
+  AlgorithmState.with_rosc
+  AlgorithmState.hyperkalemia_threshold_x10
+  AlgorithmState.min_cpr_cycles_for_ecpr
+  Decision.Recommendation
+  Decision.recommend
+  Decision.recommend_with_ecpr
+  Decision.recommend_with_cath_lab
+  Decision.reversible_cause_recommendation
+  ROSC.Indicator
+  ROSC.Findings
+  ROSC.rosc_confirmed
+  ROSC.rosc_likely
+  ROSC.etco2_threshold_mmHg
+  HyperkalemiaEKG.EKGPattern
+  HyperkalemiaEKG.expected_pattern_for_K
+  HyperkalemiaEKG.is_life_threatening_pattern
+  HyperkalemiaEKG.requires_immediate_calcium
+  HyperkalemiaEKG.pattern_severity
+  QTcTorsades.QTcCategory
+  QTcTorsades.classify_qtc
+  QTcTorsades.TorsadesRecommendation
+  QTcTorsades.recommend_torsades_management
+  HypothermicArrest.HypothermiaGrade
+  HypothermicArrest.hypothermia_grade
+  HypothermicArrest.meds_allowed
+  HypothermicArrest.repeat_defib_allowed
+  HypothermicArrest.ecmo_rewarming_indicated
+  DrowningProtocol.DrowningVictim
+  DrowningProtocol.resuscitation_indicated
+  DrowningProtocol.extend_resuscitation_drowning
+  DrowningProtocol.favorable_prognosis
+  SpecialPopulationDecision.recommend_hypothermic
+  SpecialPopulationDecision.recommend_drowning
+  SpecialPopulationDecision.hypothermic_meds_allowed
+  SpecialPopulationDecision.hypothermic_repeat_shock_allowed
+  Defibrillation.DefibrillatorType
+  Defibrillation.ShockParams
+  Defibrillation.energy_valid
+  Defibrillation.can_escalate
+  Defibrillation.escalate
+  Defibrillation.shock_appropriate
+  ProtocolSequence.Event
+  ProtocolSequence.EventLog
+  ProtocolSequence.apply_event
+  ProtocolSequence.apply_events
+  ProtocolSequence.event_valid_for_state
+  ProtocolSequence.sequence_valid
+  ProtocolSequence.count_shocks
+  ProtocolSequence.count_epi
+  ProtocolSequence.count_amio
+  Timing.TimedState
+  Timing.within_resuscitation_window
+  Timing.epi_timing_compliant
+  Timing.advance_time
+  TerminationOfResuscitation.TerminationReason
+  TerminationOfResuscitation.TerminationDecision
+  TerminationOfResuscitation.ResuscitationContext
+  TerminationOfResuscitation.evaluate_termination
+  TerminationOfResuscitation.prognostic_score
+  TerminationOfResuscitation.prognosis_favorable
+  TerminationOfResuscitation.time_to_consider_termination
+  PostArrestCare.PostArrestVitals
+  PostArrestCare.all_targets_met
+  PostArrestCare.temp_on_target
+  PostArrestCare.map_adequate
+  PostArrestCare.oxygenation_on_target
+  PostArrestCare.glucose_acceptable
+  PostArrestCare.TTM_Phase
+  PostArrestCare.ttm_phase_duration_hr
+  PostArrestCare.rewarming_safe
+  PostArrestCare.PostROSCState
+  PostArrestCare.initiate_post_arrest_care
+  PostArrestCare.cath_lab_activation_needed
+  PostArrestCare.glucose_min_mg_dl
+  PostArrestCare.glucose_max_mg_dl
+  ECPR.ECPRCandidate
+  ECPR.ecpr_eligible
+  ECPR.age_eligible
+  ECPR.time_eligible
+  ECPR.state_suitable_for_ecpr
+  PCIPathway.ECGFinding
+  PCIPathway.PCIUrgency
+  PCIPathway.PostROSCPatient
+  PCIPathway.pci_urgency
+  PCIPathway.cath_lab_activation_indicated
+  DrugInteractions.safe_to_give_calcium
+  DrugInteractions.safe_to_give_lidocaine
+  DrugInteractions.safe_to_give_amiodarone
+  DrugInteractions.antiarrhythmic_mutually_exclusive
+  RealTimeConstraints.max_hands_off_sec
+  RealTimeConstraints.cpr_fraction
+  RealTimeConstraints.cpr_fraction_adequate_pct
+  RealTimeConstraints.epi_interval_compliant
+  RealTimeConstraints.ResuscitationTimeline
+  RealTimeConstraints.timeline_valid
+  CodeReadiness.Equipment
+  CodeReadiness.Medications
+  CodeReadiness.Personnel
+  CodeReadiness.equipment_ready
+  CodeReadiness.critical_meds_available
+  CodeReadiness.all_meds_available
+  CodeReadiness.minimum_team_ready
+  CodeReadiness.optimal_team_ready
+  CodeReadiness.code_ready
+  CodeReadiness.optimal_code_ready
+  HospitalMedicationAvailability.FacilityType
+  HospitalMedicationAvailability.HospitalFormulary
+  HospitalMedicationAvailability.drug_available
+  HospitalMedicationAvailability.antiarrhythmic_available
+  HospitalMedicationAvailability.preferred_antiarrhythmic
+  HospitalMedicationAvailability.acls_minimum_requirements
+  HospitalMedicationAvailability.acls_full_requirements
+  HospitalMedicationAvailability.ProtocolExecutionContext
+  HospitalMedicationAvailability.context_supports_full_acls
+  HospitalMedicationAvailability.context_supports_ecpr
+  HospitalMedicationAvailability.context_supports_pci
+  HospitalMedicationAvailability.should_consider_transfer
+  HospitalMedicationAvailability.adjust_recommendation_for_context
+  Medication.vasopressin_dose_units
+  Medication.atropine_dose_mg_x10
+  Medication.atropine_max_dose_mg_x10
+  Medication.adenosine_first_dose_mg
+  Medication.adenosine_second_dose_mg
+  Medication.BroselowZone
+  Medication.broselow_weight_kg
+  Medication.broselow_zone_from_height
+  Medication.weight_from_height_broselow
+  Medication.weight_from_age_years
+  Medication.broselow_epi_dose_mcg
+  Medication.broselow_amio_dose_mg
+  Medication.broselow_defib_initial_J
+  Medication.broselow_defib_subsequent_J
+  Neuroprognostication.GCS
+  Neuroprognostication.gcs_total
+  Neuroprognostication.classify_gcs
+  Neuroprognostication.GCS_Severity
+  Neuroprognostication.NeuroPredictors
+  Neuroprognostication.categorize_prognosis
+  Neuroprognostication.NeuroPrognosisCategory
+  Neuroprognostication.multimodal_poor_prognosis
+  Neuroprognostication.FOUR_Score
+  Neuroprognostication.four_total
+  Neuroprognostication.four_indicates_brain_death
+  TachycardiaWithPulse.TachyType
+  TachycardiaWithPulse.classify_tachycardia
+  TachycardiaWithPulse.TachyStability
+  TachycardiaWithPulse.TachyIntervention
+  TachycardiaWithPulse.tachy_recommendation
+  TachycardiaWithPulse.cardioversion_energy
+  TachycardiaWithPulse.TachyPatient
+  TachycardiaWithPulse.vagal_maneuvers_appropriate
+  TachycardiaWithPulse.adenosine_appropriate
+  TachycardiaWithPulse.adenosine_dose_for_patient
+  BradycardiaWithPulse.BradyType
+  BradycardiaWithPulse.high_grade_block
+  BradycardiaWithPulse.atropine_likely_effective
+  BradycardiaWithPulse.BradyIntervention
+  BradycardiaWithPulse.BradyPatient
+  BradycardiaWithPulse.atropine_appropriate
+  BradycardiaWithPulse.pacing_indicated
+  BradycardiaWithPulse.brady_recommendation.
